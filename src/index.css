@@ -1,0 +1,94 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+@import "tailwindcss";
+
+:root { font-family: 'Plus Jakarta Sans', Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1e293b; background: #f8fafc; font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; min-width: 320px; min-height: 100%; height: 100%; margin: 0; }
+button, input, textarea { font: inherit; }
+button, a { -webkit-tap-highlight-color: transparent; }
+
+body { overflow: auto; }
+
+.trip-layout button.bg-neutral-950 {
+  height: 2rem;
+  padding-inline: 1rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.trip-layout [role="dialog"] button.bg-neutral-950 {
+  width: fit-content;
+  min-height: 2rem;
+  padding: 0 1rem;
+}
+
+@media (max-width: 1023px) {
+  body { overflow: auto; }
+  .trip-layout { height: auto; min-height: 100vh; overflow: visible; }
+  .trip-sidebar { max-height: 48vh; }
+}
+/* chat-home styles */
+.chat-home { height: 100dvh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: #fff; }
+.chat-home-header { height: 60px; flex: 0 0 60px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 24px; border-bottom: 1px solid #eee; }
+.chat-title-button { display: inline-flex; align-items: center; gap: 7px; border: 0; background: transparent; padding: 10px 8px; color: #111; font-size: 16px; font-weight: 600; }
+.chat-header-actions { display: flex; align-items: center; gap: 14px; }
+.planning-pills { display: flex; padding: 4px; border: 1px solid #e7e7e7; border-radius: 24px; }
+.planning-pills button { padding: 7px 13px; border: 0; border-right: 1px solid #eee; background: transparent; color: #888; font-size: 14px; }
+.planning-pills button:last-child { border-right: 0; }
+.create-trip-button { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 24px; background: #050505; color: white; font-size: 14px; font-weight: 600; text-decoration: none; }
+.chat-home-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.chat-pane { position: relative; display: flex; width: 50%; min-width: 0; align-items: center; justify-content: center; background: white; }
+.chat-welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 28px 90px; text-align: center; }
+.welcome-art { position: relative; display: grid; width: 120px; height: 120px; place-items: center; margin-bottom: 23px; border-radius: 50%; background: #b8f2d8; color: #111; }
+.welcome-art span { position: absolute; top: 32px; right: 31px; display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; background: #f42d55; color: white; }
+.chat-welcome h1 { margin: 0 0 17px; color: #111; font-size: clamp(28px, 2.6vw, 36px); font-weight: 600; letter-spacing: -1px; }
+.chat-welcome p { margin: 0; color: #222; font-size: clamp(16px, 1.6vw, 22px); line-height: 1.45; }
+.assistant-button { display: inline-flex; align-items: center; gap: 9px; margin-top: 23px; padding: 11px 16px; border: 0; border-radius: 24px; background: #f1f1f1; color: #222; font-size: 15px; }
+.chat-composer-wrap { position: absolute; right: 24px; bottom: 8px; left: 24px; }
+.chat-composer { display: flex; align-items: flex-end; gap: 8px; padding: 8px; border: 1px solid #ddd; border-radius: 18px; background: white; box-shadow: 0 2px 12px #0000000a; }
+.chat-composer textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: 0; padding: 10px; font-size: 15px; }
+.chat-composer > button { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border: 0; border-radius: 50%; background: #111; color: white; }
+.chat-disclaimer { margin: 8px 0 0; color: #888; text-align: center; font-size: 12px; }
+.discover-pane { width: 50%; min-width: 0; overflow-y: auto; border-top-left-radius: 22px; background: #f8f8f8; }
+.discover-content { padding: 39px 0 30px; }
+.discovery-section { margin-bottom: 35px; }
+.section-heading { display: flex; min-height: 42px; align-items: center; gap: 12px; margin-bottom: 14px; padding: 0 34px; }
+.section-heading h2 { display: flex; align-items: center; gap: 12px; margin: 0; color: #111; font-size: 22px; font-weight: 600; letter-spacing: -.3px; white-space: nowrap; }
+.suggestion-row { display: flex; gap: 16px; overflow-x: auto; padding: 0 34px; scrollbar-width: none; }
+.suggestion-row::-webkit-scrollbar { display: none; }
+.suggestion-card { position: relative; width: 272px; height: 260px; flex: 0 0 272px; overflow: hidden; border-radius: 18px; background: #ddd; }
+.suggestion-card img { width: 100%; height: 100%; object-fit: cover; }
+.suggestion-shade { position: absolute; inset: 0; background: #00000047; }
+.suggestion-tag { position: absolute; bottom: 71px; left: 17px; padding: 4px 9px; border-radius: 10px; background: #464646cc; color: white; font-size: 12px; font-weight: 600; }
+.suggestion-caption { position: absolute; right: 14px; bottom: 17px; left: 17px; display: flex; flex-direction: column; color: white; }
+.suggestion-caption strong { font-size: 17px; line-height: 21px; }
+.suggestion-caption span { margin-top: 2px; color: #f0f0f0; font-size: 14px; line-height: 19px; }
+.map-link, .see-all-link { display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent; color: #222; font-size: 14px; white-space: nowrap; }
+.map-link { padding: 8px 13px; border: 1px solid #ddd; border-radius: 20px; }
+.see-all-link { margin-left: auto; padding: 8px; }
+@media (max-width: 900px) {
+  .chat-home { height: auto; min-height: 100dvh; overflow: visible; }
+  .chat-home-header { padding: 0 16px; }
+  .planning-pills { display: none; }
+  .chat-home-body { min-height: 0; flex-direction: column; overflow: visible; }
+  .chat-pane, .discover-pane { width: 100%; }
+  .chat-pane { min-height: min(650px, calc(100vh - 60px)); }
+  .discover-pane { border-radius: 20px 20px 0 0; }
+}
+@media (max-width: 540px) {
+  .chat-home-header { height: auto; min-height: 60px; }
+  .create-trip-button { padding: 9px 12px; font-size: 12px; }
+  .welcome-art { width: 96px; height: 96px; }
+  .section-heading { padding: 0 20px; }
+  .section-heading h2 { gap: 6px; font-size: 17px; }
+  .suggestion-row { padding: 0 20px; }
+  .suggestion-card { width: 230px; height: 220px; flex-basis: 230px; }
+}
+.chat-title-menu { position: relative; z-index: 5; }
+.chat-title-dropdown { position: absolute; top: 42px; left: 0; min-width: 160px; padding: 8px; border-radius: 10px; background: #fff; box-shadow: 0 8px 28px #00000024; }
+.chat-title-dropdown button { width: 100%; padding: 9px 10px; border: 0; border-radius: 7px; background: transparent; color: #222; text-align: left; font-size: 14px; }
+.chat-title-dropdown button:hover { background: #f5f5f5; }
+.chat-home-header { position: relative; }
+.chat-header-actions { margin-left: auto; }
+.planning-pills { position: absolute; left: 50%; transform: translateX(-50%); }
