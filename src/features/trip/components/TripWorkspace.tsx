@@ -5,6 +5,7 @@ import { Button } from '../../../components/Button'
 import { IdeaBoard } from '../../idea'
 import { CalendarBoard, ItineraryBoard, PreferencesBoard } from '../../itinerary'
 import { TripMap } from '../../map'
+import { INITIAL_IDEAS } from '../../idea/components/ideaData'
 
 type Tab = 'Ideas' | 'Itinerary' | 'Trip preferences' | 'Calendar' | 'Map'
 const tabs: Tab[] = ['Ideas', 'Itinerary', 'Trip preferences', 'Calendar', 'Map']
@@ -23,12 +24,20 @@ export function TripWorkspace({ trip }: { trip: Trip }) {
     </header>
     <nav className="flex shrink-0 gap-6 overflow-x-auto border-b border-slate-200/80 bg-white px-5 sm:gap-8 sm:px-8" aria-label="Trip workspace tabs">{tabs.map((item) => <button key={item} role="tab" aria-selected={tab === item} onClick={() => setTab(item)} className={`shrink-0 border-b-2 py-3.5 text-xs tracking-wide transition-colors ${tab === item ? 'border-slate-900 font-semibold text-slate-900' : 'border-transparent font-medium text-slate-500 hover:text-slate-900'}`}>{item}</button>)}</nav>
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-8">
+      <div className="mb-6 flex items-center gap-4 rounded-2xl border border-neutral-200 p-4">
+        <img src={trip.cover} alt="" className="h-16 w-16 shrink-0 rounded-xl object-cover" />
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold text-neutral-900">{trip.name}</h1>
+          <p className="mt-1 text-sm text-neutral-500">{trip.destination}</p>
+          <p className="mt-1 text-xs text-neutral-500">{trip.when || trip.duration} · {trip.travelers.length} travelers · {trip.budget}</p>
+        </div>
+      </div>
       {noteOpen && <form onSubmit={(event) => { event.preventDefault(); if (note.trim()) setNotes((items) => [...items, note.trim()]); setNote(''); setNoteOpen(false) }} className="mb-4 flex gap-2"><input autoFocus value={note} onChange={(event) => setNote(event.target.value)} placeholder="Add a trip note" className="min-w-0 flex-1 rounded-xl border border-slate-200 p-3 text-sm"/><Button variant="primary" type="submit">Save note</Button></form>}
       {notes.map((item,index) => <p key={index} className="mb-3 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm text-slate-700">{item}</p>)}
-      {tab === 'Ideas' && <IdeaBoard onAddToItinerary={(name) => setItineraryAdds((items) => [...items,name])}/>}
-      {tab === 'Itinerary' && <><ItineraryBoard duration={trip.duration}/>{itineraryAdds.length > 0 && <div className="mt-4 rounded-xl border p-3"><h3 className="mb-2 text-sm font-semibold">Added from ideas</h3>{itineraryAdds.map((name,index)=><p key={index} className="py-1 text-sm">{name}</p>)}</div>}</>}
+      {tab === 'Ideas' && <IdeaBoard initialIdeas={trip.id === 'dalat' ? INITIAL_IDEAS : []} onAddToItinerary={(name) => setItineraryAdds((items) => [...items,name])}/>}
+      {tab === 'Itinerary' && <><ItineraryBoard duration={trip.duration} showSampleData={trip.id === 'dalat'}/>{itineraryAdds.length > 0 && <div className="mt-4 rounded-xl border p-3"><h3 className="mb-2 text-sm font-semibold">Added from ideas</h3>{itineraryAdds.map((name,index)=><p key={index} className="py-1 text-sm">{name}</p>)}</div>}</>}
       {tab === 'Trip preferences' && <PreferencesBoard/>}
-      {tab === 'Calendar' && <CalendarBoard when={trip.when}/>}
+      {tab === 'Calendar' && <CalendarBoard when={trip.when} showSampleData={trip.id === 'dalat'}/>}
       {tab === 'Map' && <TripMap destination={trip.destination}/>}
     </div>
   </section>

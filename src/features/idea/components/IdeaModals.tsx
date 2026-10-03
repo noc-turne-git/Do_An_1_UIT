@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { getImageUrl } from './ideaData'
 import type { Idea } from './ideaTypes'
-import { MapPin, Upload, X, ChevronDown, ChevronRight, CalendarDays } from 'lucide-react'
+import { Upload, X } from 'lucide-react'
 
 export function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
@@ -18,153 +18,75 @@ type IdeaFormProps = {
   mode: 'add' | 'edit'
   name: string
   type: string
+  price: string
+  currency: string
+  image: string
   onNameChange: (value: string) => void
   onTypeChange: (value: string) => void
+  onPriceChange: (value: string) => void
+  onCurrencyChange: (value: string) => void
+  onImageChange: (value: string) => void
   onSave: () => void
   onClose: () => void
 }
 
-export function IdeaForm({ mode, name, type, onNameChange, onTypeChange, onSave, onClose }: IdeaFormProps) {
-  const [moreDetails, setMoreDetails] = useState(false)
-  const [startTime, setStartTime] = useState('10:00')
-  const [isEditingStartTime, setIsEditingStartTime] = useState(false)
+export function IdeaForm({ mode, name, type, price, currency, image, onNameChange, onTypeChange, onPriceChange, onCurrencyChange, onImageChange, onSave, onClose }: IdeaFormProps) {
+  const [imageError, setImageError] = useState('')
+  const [uploading, setUploading] = useState(false)
   const isEdit = mode === 'edit'
+  const fieldClass = 'mt-2 w-full rounded-xl border border-neutral-300 bg-white px-4 py-3 font-normal focus:border-black focus:outline-none'
+
+  function uploadImage(file?: File) {
+    if (!file) return
+    if (!file.type.startsWith('image/')) { setImageError('Please select an image.'); return }
+    setImageError('')
+    setUploading(true)
+    const reader = new FileReader()
+    reader.onload = () => { onImageChange(String(reader.result)); setUploading(false) }
+    reader.onerror = () => { setImageError('Could not read this image. Please try again.'); setUploading(false) }
+    reader.readAsDataURL(file)
+  }
 
   return (
-    <section role="dialog" aria-modal="true" className={`w-full ${isEdit ? 'max-w-2xl' : 'flex max-h-[calc(100vh-48px)] min-h-[620px] max-w-[880px] flex-col'} overflow-hidden rounded-[22px] bg-white shadow-2xl`}>
-      <div className={`relative shrink-0 border-b border-neutral-200 text-center ${isEdit ? 'px-8 py-7' : 'flex h-[84px] items-center justify-center'}`}>
-        <button aria-label="Close" onClick={onClose} className={`absolute ${isEdit ? 'left-7 top-7' : 'left-8 top-5 text-[27px] leading-none'}`}><X size={20} /></button>
-        <h3 className="text-2xl font-semibold">{isEdit ? 'Edit details' : 'Add an idea'}</h3>
-      </div>
-
-      <div className={`${isEdit ? 'space-y-5 px-8 py-7' : 'min-h-0 flex-1 overflow-y-auto px-[30px] py-7'}`}>
-        {!isEdit && <p className="mb-7 text-sm text-neutral-500">Add a place or activity you want to remember for your trip.</p>}
-        <label className="block font-medium">
-          {isEdit ? 'Title' : 'Place or activity name'}
-          <input
-            autoFocus
-            value={name}
-            onChange={(event) => onNameChange(event.target.value)}
-            placeholder={isEdit ? undefined : 'Place or activity name'}
-            className={`mt-2 w-full border border-neutral-300 px-4 font-normal ${isEdit ? 'rounded-full py-2.5' : 'h-[54px] rounded-xl'}`}
-          />
+    <section role="dialog" aria-modal="true" aria-labelledby="idea-form-title" className="flex max-h-[calc(100dvh-32px)] w-[min(640px,calc(100vw-32px))] flex-col overflow-hidden rounded-[22px] bg-white shadow-2xl">
+      <header className="relative shrink-0 border-b border-neutral-200 px-12 py-6 text-center">
+        <button type="button" aria-label="Close" onClick={onClose} className="absolute cursor-pointer right-6 top-6"><X size={20} /></button>
+        <h3 id="idea-form-title" className="text-2xl font-semibold">{isEdit ? 'Edit details' : 'Add an idea'}</h3>
+      </header>
+      <div className="min-h-0 space-y-5 overflow-y-auto px-6 py-6 sm:px-8">
+        <label className="block text-sm font-medium">Place
+          <input autoFocus value={name} onChange={(event) => onNameChange(event.target.value)} placeholder="Place or activity name" className={fieldClass} />
         </label>
-
-        {isEdit ? (
-          <>
-            <div>
-              <p className="font-medium">Where</p>
-              <p className="mt-2 flex items-center gap-3 text-sm"><MapPin size={18} className="text-neutral-500" />{name}</p>
-              <input aria-label="Address" placeholder="Add an address" className="mt-3 w-full rounded-full border border-neutral-300 px-4 py-2.5" />
-            </div>
-
-            <div>
-              <p className="font-medium">Media</p>
-              <p className="mt-1 text-sm text-neutral-500">Photos, confirmation screenshots, QR codes, or PDFs</p>
-              <button type="button" aria-label="Upload media" className="mt-3 grid h-20 w-20 place-items-center rounded-2xl border-2 border-dashed border-neutral-300 text-neutral-500">
-                <Upload size={22} />
-              </button>
-            </div>
-
-           <button 
-              type="button" 
-              onClick={() => setMoreDetails((open) => !open)} 
-              className="flex items-center gap-2 rounded-full bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-200"
-            >
-              {moreDetails ? <ChevronDown size={16} /> : <ChevronRight size={16} />} 
-              More details
-            </button>
-            {moreDetails && (
-            <div className="space-y-4 pt-2">
-              {/* Type */}
-              <label className="block text-sm font-medium text-neutral-700">
-                Type
-                <input 
-                  value={type} 
-                  onChange={(event) => onTypeChange(event.target.value)} 
-                  placeholder="e.g. Attraction"
-                  className="mt-1.5 w-full rounded-xl border border-neutral-300 p-3 text-base font-normal focus:border-black focus:outline-none" 
-                />
-              </label>
-
-              {/* Website */}
-              <label className="block text-sm font-medium text-neutral-700">
-                Website
-                <input 
-                  placeholder="https://example.com" 
-                  className="mt-1.5 w-full rounded-xl border border-neutral-300 p-3 text-base font-normal focus:border-black focus:outline-none" 
-                />
-              </label>
-
-              {/* Price (Có thể chia 2 cột nhỏ cho Giá và Loại tiền tệ) */}
-              <div className="grid grid-cols-3 gap-3">
-                <label className="col-span-2 block text-sm font-medium text-neutral-700">
-                  Price
-                  <input 
-                    type="number"
-                    placeholder="0" 
-                    className="mt-1.5 w-full rounded-xl border border-neutral-300 p-3 text-base font-normal focus:border-black focus:outline-none" 
-                  />
-                </label>
-                <label className="block text-sm font-medium text-neutral-700">
-                  Currency
-                  <select className="mt-1.5 w-full rounded-xl border border-neutral-300 bg-white p-3 text-base font-normal focus:border-black focus:outline-none">
-                    <option value="USD">USD ($ - Đô la Mỹ)</option>
-                    <option value="VND">VND (₫ - Việt Nam Đồng)</option>
-                    <option value="EUR">EUR (€ - Euro)</option>
-                    <option value="JPY">JPY (¥ - Yên Nhật)</option>
-                    <option value="KRW">KRW (₩ - Won Hàn Quốc)</option>
-                    <option value="THB">THB (฿ - Baht Thái)</option>
-                    <option value="SGD">SGD (S$ - Đô la Singapore)</option>
-                    <option value="AUD">AUD (A$ - Đô la Úc)</option>
-                    <option value="GBP">GBP (£ - Bảng Anh)</option>
-                    <option value="CNY">CNY (¥ - Nhân dân tệ)</option>
-                    <option value="TWD">TWD (NT$ - Đô la Đài Loan)</option>
-                    <option value="MYR">MYR (RM - Ringgit Malaysia)</option>
-                  </select>
-                </label>
-              </div>
-
-              {/* Notes */}
-              <label className="block text-sm font-medium text-neutral-700">
-                Notes
-                <textarea 
-                  placeholder="Add any notes..." 
-                  className="mt-1.5 w-full rounded-xl border border-neutral-300 p-3 text-base font-normal focus:border-black focus:outline-none" 
-                  rows={3} 
-                />
-              </label>
-            </div>
-          )}
-          </>
-        ) : (
-          <label className="block text-sm">
-            Type
-            <input value={type} onChange={(event) => onTypeChange(event.target.value)} placeholder="e.g. Attraction" className="mt-2 h-[54px] w-full rounded-xl border border-neutral-300 px-4" />
+        <label className="block text-sm font-medium">Type
+          <input value={type} onChange={(event) => onTypeChange(event.target.value)} placeholder="e.g. Attraction" className={fieldClass} />
+        </label>
+        <div className="grid grid-cols-[minmax(0,1fr)_110px] gap-3">
+          <label className="block text-sm font-medium">Price
+            <input type="number" min="0" step="any" value={price} onChange={(event) => onPriceChange(event.target.value)} placeholder="0" className={fieldClass} />
           </label>
-        )}
+          <label className="block text-sm font-medium">Currency
+            <select value={currency} onChange={(event) => onCurrencyChange(event.target.value)} className={fieldClass}>
+              {['VND', 'USD', 'EUR', 'JPY', 'KRW', 'THB', 'SGD', 'AUD', 'GBP', 'CNY', 'TWD', 'MYR'].map((code) => <option key={code}>{code}</option>)}
+            </select>
+          </label>
+        </div>
+        <div>
+          <p className="text-sm font-medium">Photo</p>
+          {image && <div className="relative mt-2"><img src={getImageUrl(image)} alt="Idea preview" className="h-40 w-full rounded-xl object-cover" /><button type="button" aria-label="Remove photo" onClick={() => onImageChange('')} className="absolute right-2 top-2 rounded-full bg-white p-2 shadow"><X size={16} /></button></div>}
+          <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-neutral-300 px-4 py-5 text-sm text-neutral-600 hover:bg-neutral-50">
+            <Upload size={20} />{uploading ? 'Loading photo...' : image ? 'Replace photo' : 'Upload photo'}
+            <input type="file" accept="image/*" disabled={uploading} onChange={(event) => { uploadImage(event.target.files?.[0]); event.target.value = '' }} className="sr-only" />
+          </label>
+          {imageError && <p role="alert" className="mt-2 text-sm text-red-600">{imageError}</p>}
+        </div>
       </div>
-
-      {isEdit ? <div className="flex justify-end border-t border-neutral-100 px-8 py-5">
-        <button onClick={onSave} disabled={!name.trim()} className="rounded-full bg-black px-7 py-3 font-semibold text-white disabled:opacity-40">
-          {isEdit ? 'Update' : 'Add idea'}
-        </button>
-      </div> : <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-neutral-200 bg-white px-[30px] py-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-neutral-100"><CalendarDays size={19} className="text-neutral-700" /></div>
-          <div><p className="text-xs font-medium text-neutral-500">Start time</p><p className="mt-0.5 text-[15px] font-semibold text-neutral-900">{startTime}</p></div>
-          {isEditingStartTime && <input autoFocus type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} onBlur={() => setIsEditingStartTime(false)} className="rounded-lg border border-neutral-300 px-3 py-2" />}
-        </div>
-        <div className="flex shrink-0 gap-2">
-          <button onClick={onClose} className="rounded-full border border-neutral-200 px-5 py-2.5 text-sm font-medium hover:bg-neutral-50">Cancel</button>
-          <button onClick={() => setIsEditingStartTime(true)} className="rounded-full border border-neutral-200 px-5 py-2.5 text-sm font-medium hover:bg-neutral-50">Change time</button>
-          <button onClick={onSave} disabled={!name.trim()} className="rounded-full bg-black px-7 py-2.5 font-semibold text-white disabled:opacity-40">Add idea</button>
-        </div>
-      </footer>}
+      <footer className="flex shrink-0 justify-end gap-3 border-t border-neutral-200 px-6 py-4">
+        <button type="button" onClick={onClose} className="rounded-full border border-neutral-200 px-5 py-2.5 text-sm font-medium">Cancel</button>
+        <button type="button" onClick={onSave} disabled={!name.trim() || uploading || (price !== '' && (!Number.isFinite(Number(price)) || Number(price) < 0))} className="rounded-full bg-black px-7 py-2.5 font-semibold text-white disabled:opacity-40">{isEdit ? 'Update' : 'Add idea'}</button>
+      </footer>
     </section>
   )
 }
-
 export function DetailsModal({ idea, onClose, onAddToItinerary }: { idea: Idea; onClose: () => void; onAddToItinerary: () => void }) {
   return (
     <section role="dialog" aria-modal="true" className="w-full max-w-md space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
@@ -175,6 +97,7 @@ export function DetailsModal({ idea, onClose, onAddToItinerary }: { idea: Idea; 
       <img src={getImageUrl(idea.image)} alt="" className="h-48 w-full rounded-xl object-cover" />
       <h4 className="font-semibold">{idea.name}</h4>
       <p className="text-sm text-neutral-500">{idea.type}</p>
+      {idea.price !== undefined && <p className="text-sm font-medium">{idea.price.toLocaleString()} {idea.currency ?? 'VND'}</p>}
       <button onClick={onAddToItinerary} className="w-full rounded-full bg-neutral-950 py-3 text-sm font-semibold text-white">Add to itinerary</button>
     </section>
   )

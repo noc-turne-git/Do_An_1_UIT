@@ -1,0 +1,31 @@
+.preferences-who-modal { position: fixed; inset: 0; margin: auto; width: min(386px, calc(100vw - 24px)); max-width: none; max-height: calc(100dvh - 24px); padding: 0; overflow-y: auto; border: 1px solid #333; border-radius: 20px; background: #111; color: #eee; box-shadow: 0 24px 80px #0006; }
+.preferences-who-modal::backdrop { background: #0009; backdrop-filter: blur(4px); }
+.preferences-who-modal header { position: relative; padding: 24px 24px 16px; border-bottom: 1px solid #262626; text-align: center; }
+.preferences-who-modal h2 { margin: 0 0 6px; font-size: 22px; font-weight: 700; }
+.preferences-who-modal header p { margin: 0; font-size: 14px; color: #888; }
+.who-close { position: absolute; top: 12px; left: 12px; display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 50%; background: transparent; color: #eee; cursor: pointer; }
+.who-body { padding: 0 24px; }
+.who-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 78px; padding: 16px 0; border-bottom: 1px solid #262626; }
+.who-row:last-child { border-bottom: 0; }
+.who-label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 14px; }
+.who-label strong { font-weight: 600; }
+.who-label span { color: #888; line-height: 1.4; }
+.who-counter { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.who-counter button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid #393939; border-radius: 50%; background: transparent; color: #ddd; cursor: pointer; }
+.who-counter button:disabled { opacity: .35; cursor: not-allowed; }
+.who-counter button:enabled:hover, .who-close:hover { background: #252525; }
+.who-counter output { min-width: 16px; text-align: center; font-size: 16px; font-weight: 600; }
+.preferences-who-modal footer { display: flex; justify-content: flex-end; padding: 20px 24px 24px; }
+.who-update { min-width: 168px; height: 40px; border: 0; border-radius: 24px; background: white; color: black; cursor: pointer; font-size: 14px; }
+.who-update:hover { background: #ddd; }
+.preferences-who-modal button:focus-visible { outline: 2px solid white; outline-offset: 3px; }
+@media (max-width: 360px) { .who-counter { gap: 8px; } .who-body { padding-inline: 16px; } }
+.preferences-who-modal { width: min(360px, calc(100vw - 24px)); }
+.preferences-who-modal header { padding: 18px 20px 12px; }
+.preferences-who-modal h2 { font-size: 20px; }
+.preferences-who-modal header p { font-size: 13px; }
+.who-body { padding-inline: 20px; }
+.who-row { min-height: 66px; padding-block: 12px; }
+.who-label { gap: 4px; font-size: 13px; }
+.preferences-who-modal footer { padding: 14px 20px 18px; }
+.who-update { min-width: 136px; height: 38px; }

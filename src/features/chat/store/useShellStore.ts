@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-type Panel = 'chats' | 'notifications' | null
+type Panel = 'chats' | 'notifications' | 'account' | null
 type ShellState = { panel: Panel; togglePanel: (panel: Exclude<Panel, null>) => void; closePanel: () => void }
 export const useShellStore = create<ShellState>((set) => ({
   panel: null,

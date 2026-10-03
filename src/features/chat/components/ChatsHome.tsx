@@ -189,7 +189,7 @@ export function ChatsHome() {
             </form>
 
             <p className="my-2 text-center text-xs text-[#888]">
-              ⓘ Mindtrip can make mistakes. Check important info.
+              ⓘ Travelio can make mistakes. Check important info.
             </p>
           </div>
         </section>
@@ -227,11 +227,6 @@ export function ChatsHome() {
               onSeeAll={() => navigate('/explore')}
             />
 
-            <SuggestionSection
-              title="Get inspired"
-              items={inspiration?.guides ?? []}
-              seeAll="See all"
-            />
           </div>
         </div>
       </div>

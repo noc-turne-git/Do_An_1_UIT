@@ -1,0 +1,54 @@
+.preferences-when-modal { position: fixed; inset: 0; margin: auto; width: min(770px, calc(100vw - 24px)); height: min(640px, calc(100dvh - 24px)); max-width: none; max-height: none; padding: 0; border: 1px solid #292929; border-radius: 20px; background: #111; color: #eee; }
+.preferences-when-modal[open] { display: flex; flex-direction: column; }
+.preferences-when-modal::backdrop { background: #0009; backdrop-filter: blur(4px); }
+.preferences-when-modal button { cursor: pointer; color: inherit; }
+.preferences-when-modal button:disabled { opacity: .35; cursor: not-allowed; }
+.preferences-when-modal button:focus-visible { outline: 2px solid white; outline-offset: 2px; }
+.preferences-when-modal header { position: relative; flex-shrink: 0; padding: 24px 20px 16px; border-bottom: 1px solid #262626; text-align: center; }
+.preferences-when-modal h2 { margin: 0 0 12px; font-size: 22px; font-weight: 700; }
+.when-close { position: absolute; top: 12px; left: 12px; display: grid; place-items: center; width: 36px; height: 36px; background: transparent; border: 0; border-radius: 50%; }
+.when-tabs { display: inline-flex; gap: 4px; padding: 7px; border-radius: 28px; background: #232323; }
+.when-tabs button { padding: 8px 16px; border: 1px solid transparent; border-radius: 24px; background: transparent; font-size: 14px; font-weight: 600; }
+.when-tabs button[aria-pressed="true"] { background: #111; border-color: #353535; }
+.when-body { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 28px 24px 12px; }
+.when-calendar-navigation { position: absolute; left: 28px; right: 28px; top: 30px; display: flex; justify-content: space-between; pointer-events: none; }
+.when-calendar-navigation button, .when-month-navigation button { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 50%; background: #111; pointer-events: auto; }
+.when-calendars { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; }
+.when-calendar h3 { margin: 8px 32px 22px; text-align: center; font-size: 16px; font-weight: 700; }
+.when-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); row-gap: 5px; text-align: center; }
+.when-weekday { padding: 8px 0; color: #888; font-size: 13px; font-weight: 600; }
+.when-grid button { height: 42px; padding: 0; border: 0; border-radius: 50%; background: transparent; font-size: 14px; }
+.when-grid button:enabled:hover { background: #333; }
+.when-grid button.when-selected { background: white; color: #111; }
+.when-grid button.when-in-range { border-radius: 0; background: #3a3a3a; }
+.when-selection { margin: 20px 0 0; text-align: center; font-size: 13px; color: #999; }
+.preferences-when-modal footer { display: flex; justify-content: flex-end; padding: 20px 24px 24px; }
+.preferences-when-modal .when-update { min-width: 168px; height: 42px; border: 0; border-radius: 24px; background: white; color: black; }
+.when-flexible h3 { margin: 26px 0 16px; text-align: center; font-size: 20px; font-weight: 600; }
+.when-duration { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 48px; }
+.when-duration button { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid #393939; border-radius: 50%; background: transparent; }
+.when-duration input { width: 96px; height: 40px; border: 1px solid #393939; border-radius: 24px; background: transparent; color: #eee; text-align: center; font-size: 20px; }
+.when-month-navigation { display: flex; justify-content: space-between; margin-bottom: 6px; }
+.when-months { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+.when-months button { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 20px 4px; border: 1px solid #292929; border-radius: 18px; background: transparent; font-size: 14px; }
+.when-months button[aria-pressed="true"] { border-color: white; background: #262626; }
+.when-months svg, .when-months small { color: #888; }
+.preferences-when-modal { width: min(700px, calc(100vw - 24px)); height: min(540px, calc(100dvh - 24px)); }
+.preferences-when-modal header { padding: 18px 20px 12px; }
+.preferences-when-modal h2 { font-size: 20px; margin-bottom: 10px; }
+.when-tabs { padding: 5px; }
+.when-tabs button { padding: 7px 14px; font-size: 13px; }
+.when-body { padding: 18px 20px 10px; }
+.when-calendar-navigation { top: 20px; left: 24px; right: 24px; }
+.when-calendars { gap: 24px; }
+.when-calendar h3 { margin-bottom: 14px; font-size: 14px; }
+.when-grid { row-gap: 3px; }
+.when-grid button { height: 36px; font-size: 13px; }
+.when-weekday { padding: 6px 0; font-size: 12px; }
+.when-selection { margin-top: 14px; }
+.preferences-when-modal footer { padding: 14px 20px 18px; }
+.preferences-when-modal .when-update { min-width: 136px; height: 38px; font-size: 14px; }
+.when-flexible h3 { margin: 18px 0 12px; font-size: 18px; }
+.when-duration { margin-bottom: 28px; }
+.when-months button { padding: 14px 4px; gap: 8px; font-size: 13px; }
+@media (max-width: 600px) { .when-calendars { grid-template-columns: 1fr; gap: 18px; } .when-months { grid-template-columns: repeat(3, 1fr); } .when-body { padding-inline: 16px; } .when-duration { margin-bottom: 20px; } .when-grid button { height: 40px; } .when-duration input { font-size: 16px; } }

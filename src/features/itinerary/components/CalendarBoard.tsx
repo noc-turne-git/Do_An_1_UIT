@@ -59,12 +59,14 @@ function snapToHalfHour(value: number) {
 
 export function CalendarBoardRefactored({
   when,
+  showSampleData = true,
 }: {
   when: string
+  showSampleData?: boolean
 }) {
   const [offset, setOffset] = useState(0)
 
-  const [events, setEvents] = useState<CalendarEvent[]>([
+  const [events, setEvents] = useState<CalendarEvent[]>(showSampleData ? [
     {
       id: 'xuan-huong',
       day: 0,
@@ -89,7 +91,7 @@ export function CalendarBoardRefactored({
       title: 'Da Lat Night Market',
       type: 'Food & Shopping',
     },
-  ])
+  ] : [])
 
   const [dragState, setDragState] =
     useState<DragState | null>(null)

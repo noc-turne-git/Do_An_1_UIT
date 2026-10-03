@@ -19,6 +19,8 @@ export const IDEA_ACTIONS = [
 ] as const
 
 export const getImageUrl = (image: string) =>
-  `https://images.unsplash.com/${image}?auto=format&fit=crop&w=900&q=85`
+  image.startsWith('data:image/') || image.startsWith('https://') || image.startsWith('http://')
+    ? image
+    : `https://images.unsplash.com/${image}?auto=format&fit=crop&w=900&q=85`
 
 export const getIdeaTag = (type: string) => type.split(' & ')[0]
