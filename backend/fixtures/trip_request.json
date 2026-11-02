@@ -1,0 +1,94 @@
+{
+  "schema_version": "1.0",
+  "destination": {
+    "selection_mode": "explicit",
+    "city": "Đà Lạt",
+    "province": "Lâm Đồng",
+    "country": "Việt Nam",
+    "candidate_cities": [],
+    "preferred_areas": [],
+    "must_visit": [],
+    "avoid_places": []
+  },
+  "trip": {
+    "start_date": "2026-11-14",
+    "end_date": "2026-11-16",
+    "duration_days": 3,
+    "timezone": "Asia/Ho_Chi_Minh",
+    "arrival": {
+      "datetime": null,
+      "location": null
+    },
+    "departure": {
+      "datetime": null,
+      "location": null
+    }
+  },
+  "travelers": {
+    "adults": 2,
+    "children": 0,
+    "children_ages": []
+  },
+  "budget": {
+    "amount": 3000000,
+    "currency": "VND",
+    "scope": "whole_trip",
+    "includes": [
+      "admission",
+      "food"
+    ],
+    "excludes": [],
+    "flexibility": "strict",
+    "max_overrun_percent": 0.0,
+    "preferences": null
+  },
+  "preferences": {
+    "interests": [
+      "nature",
+      "food",
+      "photography"
+    ],
+    "pace": "relaxed",
+    "transport_modes": [
+      "motorbike"
+    ]
+  },
+  "daily_preferences": [
+    {
+      "day": 2,
+      "activity_start": "09:00",
+      "activity_end": "12:00",
+      "return_by": "12:00",
+      "start_location": null,
+      "end_location": null,
+      "min_activities": 1,
+      "target_activities": 1,
+      "max_activities": 2,
+      "rest_minutes": 0,
+      "pace_override": null
+    }
+  ],
+  "must_do": [],
+  "additional_constraints": [],
+  "meta": {
+    "raw_prompt": "Đi Đà Lạt 14–16/11/2026, hai người lớn, ngân sách 3 triệu.",
+    "field_sources": {
+      "trip.start_date": "user",
+      "trip.timezone": "default",
+      "preferences.pace": "inferred",
+      "preferences.interests": "user",
+      "preferences.transport_modes": "user",
+      "daily_preferences.0.activity_start": "user",
+      "daily_preferences.0.activity_end": "user",
+      "daily_preferences.0.return_by": "user",
+      "daily_preferences.0.min_activities": "user",
+      "daily_preferences.0.target_activities": "user",
+      "daily_preferences.0.max_activities": "user",
+      "daily_preferences.0.rest_minutes": "user"
+    },
+    "field_confidences": {
+      "preferences.pace": 0.85
+    }
+  },
+  "missing_fields": []
+}

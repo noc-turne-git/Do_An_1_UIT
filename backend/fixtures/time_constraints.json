@@ -1,0 +1,198 @@
+{
+  "schema_version": "1.0",
+  "days": [
+    {
+      "day": 1,
+      "date": "2026-11-14",
+      "activity_window": {
+        "start": {
+          "value": "09:00",
+          "is_hard": false
+        },
+        "end": {
+          "value": "20:00",
+          "is_hard": false
+        }
+      },
+      "target_activity_count": {
+        "min": {
+          "value": 0,
+          "is_hard": false
+        },
+        "target": {
+          "value": 2,
+          "is_hard": false
+        },
+        "max": {
+          "value": 4,
+          "is_hard": false
+        }
+      },
+      "pace": {
+        "value": "relaxed",
+        "is_hard": false
+      },
+      "transport_mode": {
+        "value": [
+          "motorbike"
+        ],
+        "is_hard": true
+      },
+      "meal_windows": [
+        {
+          "type": "dinner",
+          "start": "17:30",
+          "end": "19:30",
+          "duration_minutes": 60,
+          "required": false
+        }
+      ],
+      "rest_minutes": {
+        "value": 60,
+        "is_hard": false
+      },
+      "preferences": [
+        {
+          "value": "nature",
+          "is_hard": true
+        },
+        {
+          "value": "food",
+          "is_hard": true
+        },
+        {
+          "value": "photography",
+          "is_hard": true
+        }
+      ],
+      "start_location_id": null,
+      "end_location_id": null
+    },
+    {
+      "day": 2,
+      "date": "2026-11-15",
+      "activity_window": {
+        "start": {
+          "value": "09:00",
+          "is_hard": true
+        },
+        "end": {
+          "value": "12:00",
+          "is_hard": true
+        }
+      },
+      "target_activity_count": {
+        "min": {
+          "value": 1,
+          "is_hard": true
+        },
+        "target": {
+          "value": 1,
+          "is_hard": false
+        },
+        "max": {
+          "value": 2,
+          "is_hard": true
+        }
+      },
+      "pace": {
+        "value": "relaxed",
+        "is_hard": false
+      },
+      "transport_mode": {
+        "value": [
+          "motorbike"
+        ],
+        "is_hard": true
+      },
+      "meal_windows": [],
+      "rest_minutes": {
+        "value": 0,
+        "is_hard": true
+      },
+      "preferences": [
+        {
+          "value": "nature",
+          "is_hard": true
+        },
+        {
+          "value": "food",
+          "is_hard": true
+        },
+        {
+          "value": "photography",
+          "is_hard": true
+        }
+      ],
+      "start_location_id": null,
+      "end_location_id": null
+    },
+    {
+      "day": 3,
+      "date": "2026-11-16",
+      "activity_window": {
+        "start": {
+          "value": "09:00",
+          "is_hard": false
+        },
+        "end": {
+          "value": "20:00",
+          "is_hard": false
+        }
+      },
+      "target_activity_count": {
+        "min": {
+          "value": 0,
+          "is_hard": false
+        },
+        "target": {
+          "value": 2,
+          "is_hard": false
+        },
+        "max": {
+          "value": 4,
+          "is_hard": false
+        }
+      },
+      "pace": {
+        "value": "relaxed",
+        "is_hard": false
+      },
+      "transport_mode": {
+        "value": [
+          "motorbike"
+        ],
+        "is_hard": true
+      },
+      "meal_windows": [
+        {
+          "type": "dinner",
+          "start": "17:30",
+          "end": "19:30",
+          "duration_minutes": 60,
+          "required": false
+        }
+      ],
+      "rest_minutes": {
+        "value": 60,
+        "is_hard": false
+      },
+      "preferences": [
+        {
+          "value": "nature",
+          "is_hard": true
+        },
+        {
+          "value": "food",
+          "is_hard": true
+        },
+        {
+          "value": "photography",
+          "is_hard": true
+        }
+      ],
+      "start_location_id": null,
+      "end_location_id": null
+    }
+  ]
+}
