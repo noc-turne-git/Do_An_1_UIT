@@ -23,9 +23,18 @@ class Settings(BaseSettings):
     graph_max_transitions: int = Field(default=80, ge=1)
     graph_max_candidates: int = Field(default=400, ge=100)
     llm_provider: str = "mock"
+    agent_runtime_enabled: bool = False
     llm_model: str = "mock-model"
     llm_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
+    openai_base_url: str | None = None
+    openai_model: str | None = None
     llm_timeout_seconds: float = Field(default=30, gt=0)
+
+    @field_validator('openai_base_url', 'openai_model', mode='before')
+    @classmethod
+    def optional_openai_setting(cls, value):
+        return value.strip() or None if isinstance(value, str) else value
 
     @field_validator("database_url")
     @classmethod

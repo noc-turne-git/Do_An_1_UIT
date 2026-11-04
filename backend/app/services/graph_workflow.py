@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError, field_valid
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.errors import ApplicationError
+from app.agents.runtime.context import execution_identity
 from app.models.contracts import AnswerHistory, Attempt, Model, TripRequest, WorkflowState
 from app.services.constraint_planner import ConstraintPlanningError
 from app.services.workflow_state import OUTPUTS, REFS, STEPS, StateMachine, WorkflowRun
@@ -202,7 +203,12 @@ class LangGraphOrchestrator:
                     self._save(r, "planning_input_builder", TypeAdapter(OUTPUTS[5]).validate_python(data))
                 if step == "planning_engine":
                     r.last_random_seed = r.outputs["planning_input_builder"].solver_config.random_seed
-                raw = await self._call(step, r, state)
+                token = execution_identity.set({"request_id": str(r.state.request_id),
+                                                "metadata": {"step": step, "visit": r.visits[step]}})
+                try:
+                    raw = await self._call(step, r, state)
+                finally:
+                    execution_identity.reset(token)
                 raw = (raw.model_dump() if isinstance(raw, BaseModel) else
                        [v.model_dump() if isinstance(v, BaseModel) else v for v in raw]
                        if isinstance(raw, list) else raw)
