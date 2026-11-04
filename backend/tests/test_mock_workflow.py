@@ -10,7 +10,8 @@ from app.core.errors import ApplicationError
 from app.main import create_app
 from app.models.contracts import TripRequest, WorkflowState
 from app.services.mock_workflow import fixture, mock_components
-from app.services.orchestrator import Orchestrator, STEPS
+from app.services.graph_workflow import LangGraphOrchestrator
+from app.services.workflow_state import STEPS
 
 
 def setup():
@@ -18,7 +19,7 @@ def setup():
 
 
 def run(components, data, **kwargs):
-    return asyncio.run(Orchestrator(components, defaults=fixture("planner_defaults")).run(
+    return asyncio.run(LangGraphOrchestrator(components, defaults=fixture("planner_defaults")).run(
         TripRequest.model_validate(data), current_date=date(2026, 11, 2), **kwargs))
 
 
@@ -52,7 +53,7 @@ def test_happy_path_order_and_real_constraints():
     planning = result.artifacts[result.state.artifacts.planning_input_id]
     assert planning["budget"] == TripRequest.model_validate(data).budget.model_dump(mode="json")
     assert planning["time_constraints"]["days"][1]["activity_window"]["end"] == {"value": "12:00", "is_hard": True}
-    assert result.state.attempts[0].result == "accepted"
+    assert result.attempts[0].result == "accepted"
     assert result.final_result.diagnostics.optimality_proven is False
     assert result.explanation == result.final_result.summary.summary_message
     assert len(result.artifacts) == 8
@@ -92,7 +93,7 @@ def test_invalid_output_at_each_boundary(step, method):
     assert result.state.status == "failed"
     assert result.state.current_step == step
     assert step not in result.state.completed_steps
-    assert result.state.errors[-1].code == "output_schema_invalid"
+    assert result.errors[-1].message.startswith("[output_schema_invalid]")
     assert result.final_result is None
 
 
@@ -103,11 +104,11 @@ def test_exception_records_state(exception, code):
     c.place_agent.find = AsyncMock(side_effect=exception)
     result = run(c, data)
     assert result.state.status == "failed"
-    assert result.state.errors[-1].code == code
+    assert result.errors[-1].message.startswith(f"[{code}]")
     assert "secret" not in result.model_dump_json()
 
 
-@pytest.mark.parametrize("suggestions,expected", [([], "failed"), ([{"field": "budget.amount", "value": 4000000}], "awaiting_relaxation")])
+@pytest.mark.parametrize("suggestions,expected", [([], "failed"), ([{"constraint_type": "budget", "description": "Increase budget", "payload": {"field": "budget.amount", "value": 4000000}}], "awaiting_relaxation")])
 @pytest.mark.parametrize("status", ["infeasible", "partial"])
 def test_infeasible_and_partial(suggestions, expected, status):
     c, data = setup()
@@ -121,7 +122,7 @@ def test_infeasible_and_partial(suggestions, expected, status):
     c.explainer.explain = AsyncMock()
     result = run(c, data)
     assert result.state.status == expected
-    assert result.state.attempts[-1].result == "infeasible"
+    assert result.attempts[-1].result == "infeasible"
     assert result.state.clarification_round == 0
     assert result.final_result is None
     c.explainer.explain.assert_not_called()
@@ -130,14 +131,16 @@ def test_infeasible_and_partial(suggestions, expected, status):
 
 def test_replan_bound_seed_and_immutable_artifacts():
     c, data = setup()
-    attach_validation(c, rejected())
+    output = rejected()
+    output["violations"][0]["rule"] = "overlap"
+    attach_validation(c, output)
     result = run(c, data)
     assert result.state.status == "failed"
-    assert result.state.errors[-1].code == "retry_exhausted"
+    assert result.errors[-1].message.startswith("[retry_or_revision_limit]")
     assert result.state.retry_count == 3
-    assert [a.random_seed for a in result.state.attempts] == [42, 43, 44, 45]
-    assert len({a.itinerary_id for a in result.state.attempts}) == 4
-    assert all(a.result == "hard_violation" for a in result.state.attempts)
+    assert [a.random_seed for a in result.attempts] == [42, 43, 44, 45]
+    assert len({a.itinerary_id for a in result.attempts}) == 4
+    assert all(a.result == "hard_violation" for a in result.attempts)
     assert len([p for p in result.artifacts.values() if isinstance(p, dict) and "solver_config" in p]) == 4
 
 
@@ -148,8 +151,8 @@ def test_invalid_validation_never_completes():
     attach_validation(c, output)
     result = run(c, data)
     assert result.state.status == "failed"
-    assert result.state.errors[-1].code == "output_schema_invalid"
-    assert result.state.attempts[-1].result == "error"
+    assert result.errors[-1].message.startswith("[output_schema_invalid]")
+    assert result.attempts[-1].result == "error"
 
 
 def test_resume_records_answer_and_does_not_mutate_previous():
@@ -160,10 +163,10 @@ def test_resume_records_answer_and_does_not_mutate_previous():
     result = run(c, data, previous=previous, answer_raw="3 triệu")
     assert result.state.status == "completed"
     assert previous.state.status == "clarifying"
-    history = result.state.answers_history[-1]
+    history = result.answers_history[-1]
     assert history.resolved_fields == ["budget.amount"]
     assert history.answer_raw == "3 triệu"
-    assert not result.state.pending_questions
+    assert not result.pending_questions
 
 
 def test_three_round_limit_without_default():
@@ -174,7 +177,7 @@ def test_three_round_limit_without_default():
         result = run(c, data, previous=result, answer_raw="still missing")
     assert result.state.status == "failed"
     assert result.state.clarification_round == 3
-    assert len(result.state.answers_history) == 3
+    assert len(result.answers_history) == 3
 
 
 def test_id_mismatch_rejected():
@@ -182,7 +185,7 @@ def test_id_mismatch_rejected():
     c.validator.validate = AsyncMock(return_value=fixture("validation_result"))
     result = run(c, data)
     assert result.state.status == "failed"
-    assert result.state.errors[-1].code == "planning_input_inconsistent"
+    assert result.errors[-1].message.startswith("[planning_input_inconsistent]")
 
 
 def test_demo_api_and_invalid_body():
@@ -224,7 +227,7 @@ def test_engine_exception_has_attempt_without_stale_ids():
     c.planning_engine.plan = AsyncMock(side_effect=RuntimeError("engine failed"))
     result = run(c, data)
     assert result.state.current_step == "planning_engine"
-    attempt = result.state.attempts[-1]
+    attempt = result.attempts[-1]
     assert attempt.result == "error"
     assert attempt.itinerary_id is None and attempt.validation_result_id is None
 
@@ -233,7 +236,7 @@ def test_preference_default_after_three_rounds():
     c, data = setup()
     data["preferences"]["pace"] = None
     data["meta"]["field_sources"].pop("preferences.pace")
-    orchestrator = Orchestrator(c, defaults=fixture("planner_defaults"),
+    orchestrator = LangGraphOrchestrator(c, defaults=fixture("planner_defaults"),
                                 clarification_defaults={"preferences.pace": "relaxed"})
     request = TripRequest.model_validate(data)
     result = asyncio.run(orchestrator.run(request, current_date=date(2026, 11, 2)))
@@ -252,7 +255,7 @@ def test_declared_unknown_not_asked_again():
     data["meta"]["field_sources"]["budget.amount"] = "user"
     result = run(c, data, previous=previous, answer_raw="chưa biết")
     assert result.state.status == "completed"
-    assert result.state.answers_history[-1].declared_unknown_fields == ["budget.amount"]
+    assert result.answers_history[-1].declared_unknown_fields == ["budget.amount"]
     assert result.state.clarification_round == 1
     assert result.artifacts[result.state.artifacts.planning_input_id]["budget"]["amount"] is None
 
@@ -268,5 +271,5 @@ def test_replan_then_accept():
     c.validator.validate = AsyncMock(side_effect=validate)
     result = run(c, data)
     assert result.state.status == "completed"
-    assert [a.result for a in result.state.attempts] == ["hard_violation", "accepted"]
+    assert [a.result for a in result.attempts] == ["hard_violation", "accepted"]
     assert result.state.retry_count == 1

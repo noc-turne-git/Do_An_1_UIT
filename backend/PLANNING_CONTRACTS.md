@@ -1,5 +1,7 @@
 # Models và Constraint Planner
 
+> Cập nhật persistence: xem [README.md](README.md) và [supabase/README.md](supabase/README.md). Nội dung dưới mô tả skeleton trước đồng bộ. Hiện ID là UUID, trip_id tách request_id; state không chứa questions/history/attempts/errors. LangGraph is the sole orchestrator, with optional WorkflowPersistence; see GRAPH_WORKFLOW.md.
+
 Nguồn chính: `docs/Cấu trúc schema.md`, đối chiếu các quyết định tương thích trong `docs/Backend_ERD.md`. Mở rộng `app/models/contracts.py` hiện có, dùng nguyên Protocol trong `app/agents/interfaces.py`. Không có schema thay thế, agent thật, Planning Engine, Validator hay endpoint lập lịch trình.
 
 ## Chạy
@@ -15,7 +17,7 @@ Lệnh thứ hai tái tạo fixture minh họa, không gọi mạng. Cài môi t
 
 Kết quả chạy thực tế sau triển khai: **87 passed, 2 skipped, 1 warning**. Hai test PostgreSQL được skip vì chưa cấu hình DATABASE_URL/TEST_DATABASE_URL. Warning hiện hữu của Starlette TestClient về httpx; không có lỗi test. Chưa xác minh PostgreSQL server trong lần chạy này.
 
-## Gọi từ Orchestrator tương lai
+## Gọi từ LangGraph Orchestrator
 
 ```python
 import json
@@ -64,7 +66,7 @@ JSON riêng cho cả 7 loại được yêu cầu, thêm `time_constraints.json`
 2. Tài liệu chưa định nghĩa đường dẫn source cho phần tử array. Quy ước triển khai là `daily_preferences.0.activity_start` (index 0-based trong array), khác với day=1-based. Khi thiếu cả daily record, lỗi chỉ rõ day và đường dẫn `daily_preferences[day=N].field`; không tạo giả một phần tử request.
 3. Mục 3 nói giá trị user là hard, nhưng ví dụ pace/transport có is_hard=false. Planner theo quy tắc văn bản và source; chưa có trường riêng để người dùng nói một sở thích user chỉ là soft. Cần bổ sung thiết kế nếu muốn phân biệt ý định đó.
 4. Chưa có shape xác định cho admission_price_raw và relaxation_suggestions; giữ dict opaque như skeleton. Danh sách đầy đủ của pace/transport/category/scope/flexibility/constraint.type chưa có; không tự dựng enum đóng.
-5. selection_status bảng đầu không có needs_more_info, bảng sau có; giữ enum hiện hữu. destination_round tối đa 2 mâu thuẫn clarification_round chung tối đa 3; chưa triển khai Orchestrator nên không chọn logic mới.
+5. selection_status bảng đầu không có needs_more_info, bảng sau có; giữ enum hiện hữu. destination_round tối đa 2 mâu thuẫn clarification_round chung tối đa 3; the implemented graph uses the common clarification limit; see GRAPH_WORKFLOW.md.
 6. Ví dụ checked_rules dùng day_window nhưng bảng 8.4 dùng day_start_window. Model chọn bảng 8.4 khi kiểm đủ 14 rules. Không tự normalize tên.
 7. Mục 7 có chi phí/chặng về; mục 8.5 bỏ chi phí di chuyển và chỉ cộng thời gian giữa hoạt động. Fixture theo 8.5, không giải quyết thay Engine/Validator. Trọng số mẫu normalized=true nhưng không tổng bằng 1; không ép tổng khi chưa rõ nghĩa normalized.
 8. Giờ mở cửa qua nửa đêm chưa được hỗ trợ bởi Validator theo 8.5; models vẫn giữ dữ liệu nguồn, không tự sửa thành giờ khác. Không ép weekday duy nhất vì một ngày có thể có nhiều khoảng mở cửa.

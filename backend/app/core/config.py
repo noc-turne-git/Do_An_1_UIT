@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     database_url: SecretStr | None = None
+    supabase_url: str | None = None
+    supabase_publishable_key: SecretStr | None = None
+    graph_max_clarifications: int = Field(default=3, ge=0)
+    graph_max_revisions: int = Field(default=8, ge=0)
+    graph_max_retries: int = Field(default=3, ge=0)
+    graph_max_transitions: int = Field(default=80, ge=1)
+    graph_max_candidates: int = Field(default=400, ge=100)
     llm_provider: str = "mock"
     llm_model: str = "mock-model"
     llm_api_key: SecretStr | None = None

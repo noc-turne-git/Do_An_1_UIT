@@ -279,13 +279,13 @@ def test_planning_consistency(kind):
 
 
 def test_workflow_clarification():
-    data=dict(request_id="req_001",status="clarifying",current_step="request_parser",completed_steps=[],artifacts={},
-        clarification_round=1,max_clarification_rounds=3,pending_fields=["trip.start_date"],
-        pending_questions=[dict(question="Ngày đi?",fields=["trip.start_date"])],answers_history=[],attempts=[],retry_count=0,errors=[])
+    from uuid import uuid4
+    data=dict(request_id=uuid4(),trip_id=uuid4(),status="clarifying",current_step="request_parser",completed_steps=[],artifacts={},
+        clarification_round=1,max_clarification_rounds=3,pending_fields=["trip.start_date"],retry_count=0)
     WorkflowState.model_validate(data)
     data["pending_questions"]=[]
     with pytest.raises(ValidationError): WorkflowState.model_validate(data)
-    data["status"]="planning"
+    data.pop("pending_questions")
     data["clarification_round"]=4
     with pytest.raises(ValidationError): WorkflowState.model_validate(data)
 

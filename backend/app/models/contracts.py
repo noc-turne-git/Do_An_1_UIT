@@ -1,15 +1,16 @@
-"""Shared contracts from docs/Cấu trúc schema.md; ambiguities: docs/Backend_ERD.md.
+"""Shared contracts from docs/Cáº¥u trÃºc schema.md; ambiguities: docs/Backend_ERD.md.
 
 These models validate data shape, not the 14 business rules of the future Validator.
 """
 from datetime import date
+from uuid import UUID
 from typing import Annotated, Generic, Literal, TypeVar
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt, StrictBool, field_validator, model_validator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-Money = Annotated[StrictInt, Field(ge=0)]
-Minutes = Annotated[StrictInt, Field(ge=0)]
+Money = Annotated[StrictInt, Field(ge=0, le=9223372036854775807)]
+Minutes = Annotated[StrictInt, Field(ge=0, le=2147483647)]
 Confidence = Annotated[float, Field(ge=0, le=1)]
 Clock = Annotated[str, Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")]
 Step = Literal["request_parser", "destination_agent", "constraint_planner", "place_agent", "budget_module", "planning_input_builder", "planning_engine", "validator", "explainer"]
@@ -336,7 +337,7 @@ class VisitDuration(Model):
 
 
 class Suitability(Model):
-    score_places: Annotated[float, Field(ge=0, le=100)]
+    score_places: Annotated[StrictInt, Field(ge=0, le=100)]
     matched_interests: list[str]
     reason: str
 
@@ -405,12 +406,12 @@ class CostedPlaceCandidate(Contract):
     category: str
     types: list[str]
     address: str | None
-    score_places: Annotated[float, Field(ge=0, le=100)]
+    score_places: Annotated[StrictInt, Field(ge=0, le=100)]
     price_status: PriceStatus
     price_confidence_score: Confidence | None
     estimated_total_cost: CurrencyCostRange | None
-    # Source document names this field but does not define its internal shape.
-    admission_price_raw: dict[str, object] | None = None
+    # Original admission-price text, preserved without parsing.
+    admission_price_raw: str | None = None
     score_budget: float | None = None
 
     @model_validator(mode="after")
@@ -429,13 +430,13 @@ class BudgetResult(Contract):
 class PlanningPlace(Model):
     place_id: str
     types: list[str]
-    score_places: Annotated[float, Field(ge=0, le=100)]
+    score_places: Annotated[StrictInt, Field(ge=0, le=100)]
     visit_duration_typical: Minutes
     estimated_total_cost: CurrencyCostRange
     price_status: PriceStatus
     price_confidence_score: Confidence | None
-    latitude: float
-    longitude: float
+    latitude: Annotated[float, Field(ge=-90, le=90)]
+    longitude: Annotated[float, Field(ge=-180, le=180)]
     cluster_id: int | None
     opening_hours: OpeningHours
 
@@ -483,7 +484,7 @@ class SolverConfig(Model):
 
 
 class PlanningInput(Contract):
-    trip_id: str
+    trip_id: UUID
     budget: Budget
     candidate_places: list[PlanningPlace]
     must_visit_place_ids: list[str]
@@ -522,7 +523,8 @@ class Activity(Model):
     start_time: Clock
     departure_time: Clock
     travel_minutes_from_previous: Minutes | None
-    estimated_total_cost: CostRange
+    estimated_total_cost: CostRange | None
+    price_status: PriceStatus
 
     @model_validator(mode="after")
     def time_order(self):
@@ -531,19 +533,39 @@ class Activity(Model):
         return self
 
 
+    @model_validator(mode="after")
+    def cost_status(self):
+        validate_cost_status(self.price_status, self.estimated_total_cost)
+        return self
+
+
 class ItineraryDay(Model):
     day: int
     date: date
     activities: list[Activity]
-    day_total_cost: CostRange
+    day_total_cost: CostRange | None
+    price_status: PriceStatus
+
+
+    @model_validator(mode="after")
+    def cost_status(self):
+        validate_cost_status(self.price_status, self.day_total_cost)
+        return self
 
 
 class Summary(Model):
     total_scheduled_places: Minutes
-    total_cost: CostRange
+    total_cost: CostRange | None
+    price_status: PriceStatus
     total_travel_minutes: Minutes
     objective_value: float | None
     summary_message: str
+
+
+    @model_validator(mode="after")
+    def cost_status(self):
+        validate_cost_status(self.price_status, self.total_cost)
+        return self
 
 
 class DroppedPlace(Model):
@@ -559,14 +581,27 @@ class Diagnostics(Model):
 
 
 class Itinerary(Contract):
-    trip_id: str
+    trip_id: UUID
     status: SolverStatus
     currency: str
     days: list[ItineraryDay]
     summary: Summary
     dropped_places: list[DroppedPlace]
-    relaxation_suggestions: list[dict[str, object]]
+    relaxation_suggestions: list["RelaxationProposal"]
     diagnostics: Diagnostics
+
+
+    @model_validator(mode="after")
+    def solver_status_consistent(self):
+        if self.status != self.diagnostics.solver_status:
+            raise ValueError("status and solver_status differ")
+        return self
+
+
+class RelaxationProposal(Model):
+    constraint_type: str
+    description: str
+    payload: dict[str, object]
 
 
 class Finding(Model):
@@ -592,7 +627,7 @@ class Recomputed(Model):
 
 
 class ValidationResult(Contract):
-    trip_id: str
+    trip_id: UUID
     is_valid: StrictBool
     violations: list[Finding]
     warnings: list[Finding]
@@ -637,53 +672,46 @@ class Attempt(Model):
     time_limit_seconds: Annotated[StrictInt, Field(gt=0)]
     result: Literal["accepted", "hard_violation", "infeasible", "error"]
     violations: list[str]
-    itinerary_id: str | None
-    validation_result_id: str | None
+    itinerary_id: UUID | None
+    validation_result_id: UUID | None
 
 
 class WorkflowError(Model):
     step: Step
-    code: str
+    code: Literal["llm_output_invalid", "external_api_error", "planning_input_inconsistent", "solver_error", "validator_internal_error"]
     message: str
     retryable: StrictBool
 
 
 class ArtifactReferences(Model):
-    trip_request_id: str | None = None
-    destination_result_id: str | None = None
-    time_constraints_id: str | None = None
-    candidates_id: str | None = None
-    costed_candidates_id: str | None = None
-    planning_input_id: str | None = None
-    itinerary_id: str | None = None
-    validation_result_id: str | None = None
+    trip_request_id: UUID | None = None
+    destination_result_id: UUID | None = None
+    time_constraints_id: UUID | None = None
+    candidates_id: UUID | None = None
+    costed_candidates_id: UUID | None = None
+    planning_input_id: UUID | None = None
+    itinerary_id: UUID | None = None
+    validation_result_id: UUID | None = None
 
 
 class WorkflowState(Contract):
-    """Data contract; transition behavior lives in services.orchestrator."""
-    request_id: str
+    """Small runtime references/counters; histories and payloads are persisted separately."""
+    request_id: UUID
+    trip_id: UUID
     status: Literal["parsing", "clarifying", "planning", "validating", "awaiting_relaxation", "completed", "failed"]
     current_step: Step
     completed_steps: list[Step]
     artifacts: ArtifactReferences
     clarification_round: Minutes
-    max_clarification_rounds: Literal[3] = 3
+    max_clarification_rounds: Minutes = 3
+    destination_round: Minutes = 0
     pending_fields: list[str]
-    pending_questions: list[PendingQuestion]
-    answers_history: list[AnswerHistory]
-    attempts: list[Attempt]
     retry_count: Minutes
-    errors: list[WorkflowError]
 
     @model_validator(mode="after")
     def clarification_consistent(self):
         if self.clarification_round > self.max_clarification_rounds:
             raise ValueError("clarification limit exceeded")
-        covered = {field for question in self.pending_questions for field in question.fields}
-        if not covered <= set(self.pending_fields):
-            raise ValueError("questions may only address pending_fields")
-        if self.status == "clarifying" and covered != set(self.pending_fields):
-            raise ValueError("questions must cover all pending fields")
         return self
 
 
@@ -701,7 +729,20 @@ def validate_price(status, cost, confidence):
     elif status == "VERIFIED_FREE":
         if cost.min != 0 or cost.max != 0:
             raise ValueError("VERIFIED_FREE requires zero cost")
-    elif cost.max == 0:
+    elif cost.min <= 0:
         raise ValueError("zero cost requires VERIFIED_FREE")
     if status == "ESTIMATED" and confidence is None:
         raise ValueError("ESTIMATED price requires confidence")
+
+
+def validate_cost_status(status, cost):
+    if status == "UNKNOWN":
+        if cost is not None:
+            raise ValueError("UNKNOWN cost must be null")
+    elif cost is None:
+        raise ValueError("known cost requires range")
+    elif status == "VERIFIED_FREE":
+        if cost.min != 0 or cost.max != 0:
+            raise ValueError("VERIFIED_FREE requires zero cost")
+    elif cost.min <= 0:
+        raise ValueError("ESTIMATED cost must be positive")

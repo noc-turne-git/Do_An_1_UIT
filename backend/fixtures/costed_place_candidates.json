@@ -10,7 +10,7 @@
       "tourist_attraction"
     ],
     "address": null,
-    "score_places": 92.0,
+    "score_places": 92,
     "price_status": "ESTIMATED",
     "price_confidence_score": 0.7,
     "estimated_total_cost": {
@@ -32,7 +32,7 @@
       "food"
     ],
     "address": null,
-    "score_places": 85.0,
+    "score_places": 85,
     "price_status": "ESTIMATED",
     "price_confidence_score": 0.7,
     "estimated_total_cost": {
@@ -54,7 +54,7 @@
       "tourist_attraction"
     ],
     "address": null,
-    "score_places": 78.0,
+    "score_places": 78,
     "price_status": "ESTIMATED",
     "price_confidence_score": 0.7,
     "estimated_total_cost": {

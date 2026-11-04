@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
+from sqlalchemy.exc import SQLAlchemyError
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,7 @@ from starlette.exceptions import HTTPException
 
 from app.api.health import router
 from app.api.dev_workflows import router as dev_workflows_router
+from app.api.workflows import router as workflows_router
 from app.core.config import Settings, get_settings
 from app.core.errors import ApplicationError
 from app.db.session import Database
@@ -30,14 +32,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.database.dispose()
 
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
+    app.state.settings = settings
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                        allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
     app.include_router(router)
     app.include_router(dev_workflows_router)
+    app.include_router(workflows_router)
 
     @app.exception_handler(ApplicationError)
     async def application_error(request: Request, exc: ApplicationError):
-        return JSONResponse(status_code=503 if exc.retryable else 400,
+        return JSONResponse(status_code=404 if exc.code == 'not_found' else 503 if exc.retryable else 400,
                             content={"error": {"code": exc.code, "message": exc.message, "retryable": exc.retryable}})
 
     @app.exception_handler(RequestValidationError)
@@ -48,6 +52,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def http_error(request: Request, exc: HTTPException):
         return JSONResponse(status_code=exc.status_code, headers=exc.headers,
                             content={"error": {"code": "http_error", "message": str(exc.detail)}})
+
+    @app.exception_handler(SQLAlchemyError)
+    async def database_error(request: Request, exc: SQLAlchemyError):
+        logger.error("Database operation failed: %s", type(exc).__name__)
+        return JSONResponse(status_code=503, content={"error": {
+            "code": "database_error", "message": "Database operation failed", "retryable": True}})
 
     @app.exception_handler(Exception)
     async def unexpected_error(request: Request, exc: Exception):

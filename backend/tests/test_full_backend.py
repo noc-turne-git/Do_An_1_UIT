@@ -9,15 +9,11 @@ import pkgutil
 import socket
 from copy import deepcopy
 from datetime import date
-from io import StringIO
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from sqlalchemy import CheckConstraint, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import configure_mappers
@@ -37,7 +33,8 @@ from app.models import (CostedPlaceCandidate, DestinationResult, Itinerary,
 from app.repositories.artifacts import ArtifactRepository
 from app.services.constraint_planner import DeterministicConstraintPlanner, PlannerDefaults
 from app.services.mock_workflow import fixture, mock_components
-from app.services.orchestrator import Orchestrator, STEPS, WorkflowRun
+from app.services.graph_workflow import LangGraphOrchestrator, GraphRun
+from app.services.workflow_state import STEPS
 
 METHODS = ("parse", "select", "build", "find", "estimate", "build", "plan", "validate", "explain")
 CONTRACTS = (
@@ -74,7 +71,7 @@ def offline(monkeypatch):
 
 
 def execute(components=None, data=None, **kwargs):
-    return asyncio.run(Orchestrator(components or mock_components(),
+    return asyncio.run(LangGraphOrchestrator(components or mock_components(),
         defaults=fixture("planner_defaults")).run(
         TripRequest.model_validate(data or fixture("trip_request")),
         current_date=date(2026, 11, 2), **kwargs))
@@ -211,7 +208,7 @@ def test_exception_at_every_step_stops_downstream(step, method):
     assert result.state.status == "failed"
     assert result.state.current_step == step
     assert result.state.completed_steps == list(STEPS[:index])
-    assert result.state.errors[-1].code == "module_exception"
+    assert result.errors[-1].message.startswith("[module_exception]")
     assert "PRIVATE_SENTINEL" not in result.model_dump_json()
     assert result.final_result is None
     for spy in spies:
@@ -226,7 +223,7 @@ def test_invalid_constraint_input_stops_before_places():
     result = execute(components, data)
     assert result.state.status == "failed"
     assert result.state.current_step == "constraint_planner"
-    assert result.state.errors[-1].code == "constraint_planning_failed"
+    assert result.errors[-1].message.startswith("[constraint_planning_failed]")
     components.place_agent.find.assert_not_awaited()
 
 
@@ -241,8 +238,10 @@ def test_place_cost_id_mismatch_stops_before_engine():
     components.planning_engine.plan = AsyncMock()
     result = execute(components)
     assert result.state.status == "failed"
-    assert result.state.current_step == "planning_input_builder"
-    assert result.state.errors[-1].code == "planning_input_inconsistent"
+    assert result.state.current_step == "budget_module"
+    assert result.errors[-1].message.startswith("[retry_or_revision_limit]")
+    assert result.visits["place_agent"] > 1
+    assert "planning_input_builder" not in result.state.completed_steps
     components.planning_engine.plan.assert_not_awaited()
 
 
@@ -252,7 +251,7 @@ def test_engine_trip_id_mismatch_stops_before_validator():
     components.validator.validate = AsyncMock(wraps=components.validator.validate)
     result = execute(components)
     assert result.state.status == "failed"
-    assert result.state.errors[-1].code == "planning_input_inconsistent"
+    assert result.errors[-1].message.startswith("[planning_input_inconsistent]")
     components.validator.validate.assert_not_awaited()
     assert "planning_engine" not in result.state.completed_steps
     assert result.state.artifacts.itinerary_id is None
@@ -267,12 +266,12 @@ def test_cross_module_trip_id_rejected_before_saving(step, method, ref):
     original = getattr(getattr(components, step), method)
     async def changed_id(*args, **kwargs):
         output = await original(*args, **kwargs)
-        return output.model_copy(update={"trip_id": "wrong_trip"})
+        return output.model_copy(update={"trip_id": __import__("uuid").uuid4()})
     setattr(getattr(components, step), method, changed_id)
     result = execute(components)
     assert result.state.status == "failed"
     assert result.state.current_step == step
-    assert result.state.errors[-1].code == "planning_input_inconsistent"
+    assert result.errors[-1].message.startswith("[planning_input_inconsistent]")
     assert getattr(result.state.artifacts, ref) is None
     assert step not in result.state.completed_steps
 
@@ -297,7 +296,7 @@ def test_multiday_workflow_preserves_daily_constraints_and_rejects_unsupported_f
     assert times["days"][2]["pace"] == {"value": "busy", "is_hard": True}
     assert result.state.status == "failed"
     assert result.state.current_step == "planning_engine"
-    assert result.state.errors[-1].code == "mock_fixture_unsupported"
+    assert result.errors[-1].message.startswith("[mock_fixture_unsupported]")
 
 
 def test_engine_error_status_cannot_complete_with_mock_accept():
@@ -311,7 +310,7 @@ def test_engine_error_status_cannot_complete_with_mock_accept():
     components.explainer.explain = AsyncMock()
     result = execute(components)
     assert result.state.status == "failed"
-    assert result.state.attempts[-1].result == "error"
+    assert result.attempts[-1].result == "error"
     components.explainer.explain.assert_not_awaited()
 
 
@@ -321,7 +320,7 @@ def test_corrupt_constructed_model_is_revalidated():
     output = output.model_copy(update={"selection_status": "WRONG"})
     components.destination_agent.select = AsyncMock(return_value=output)
     result = execute(components)
-    assert result.state.errors[-1].code == "output_schema_invalid"
+    assert result.errors[-1].message.startswith("[output_schema_invalid]")
     assert result.state.artifacts.destination_result_id is None
 
 
@@ -334,7 +333,7 @@ def test_cancellation_propagates():
 
 def test_workflow_artifacts_roundtrip_and_snapshot_independence():
     result = execute()
-    assert WorkflowRun.model_validate_json(result.model_dump_json()) == result
+    assert GraphRun.model_validate_json(result.model_dump_json()) == result
     assert len(set(result.state.artifacts.model_dump().values())) == 8
     first = result.checkpoints[0].model_dump_json()
     itinerary = result.artifacts[result.state.artifacts.itinerary_id]
@@ -410,19 +409,12 @@ def test_config_environment_overrides_dotenv(tmp_path, monkeypatch):
 
 def test_orm_metadata_postgresql_ddl_and_relationships():
     configure_mappers()
-    assert set(Base.metadata.tables) == {"trips", "workflows", "artifacts"}
-    for model, primary in [(TripRecord, "trip_id"), (WorkflowRecord, "request_id"), (ArtifactRecord, "artifact_id")]:
-        assert [c.name for c in model.__table__.primary_key] == [primary]
-        assert "CREATE TABLE" in str(CreateTable(model.__table__).compile(dialect=postgresql.dialect()))
-    assert {f.target_fullname for f in WorkflowRecord.__table__.foreign_keys} == {"trips.trip_id"}
-    assert {f.target_fullname for f in ArtifactRecord.__table__.foreign_keys} == {"workflows.request_id"}
-    trip = TripRecord(trip_id="test")
-    workflow = WorkflowRecord(request_id="request", trip=trip, schema_version="1.0", state={})
-    artifact = ArtifactRecord(artifact_id="artifact", workflow=workflow, kind="trip_request", schema_version="1.0", payload={})
-    assert trip.workflows == [workflow] and workflow.artifacts == [artifact]
-    assert WorkflowRecord.__mapper__.version_id_col.name == "revision"
-    assert any(isinstance(c, CheckConstraint) for c in WorkflowRecord.__table__.constraints)
-    assert any(isinstance(c, UniqueConstraint) for c in ArtifactRecord.__table__.constraints)
+    assert len(Base.metadata.tables) == 19
+    assert 'workflows' not in Base.metadata.tables and 'artifacts' not in Base.metadata.tables
+    for table in Base.metadata.sorted_tables:
+        assert 'CREATE TABLE' in str(CreateTable(table).compile(dialect=postgresql.dialect()))
+    assert 'state' not in WorkflowRecord.__table__.c
+    assert ArtifactRecord.__tablename__ == 'workflow_artifacts'
 
 
 @pytest.mark.parametrize("failure", [False, True])
@@ -460,27 +452,20 @@ def test_database_no_config_and_connection_error():
 
 
 def test_repository_add_and_get_without_implicit_commit():
-    session = MagicMock()
-    repository = ArtifactRepository(session)
+    from uuid import uuid4
+    session, user, request = MagicMock(), uuid4(), uuid4()
+    session.scalar.side_effect = [WorkflowRecord(request_id=request), None]
+    repository = ArtifactRepository(session, user)
     payload = TripRequest.model_validate(fixture("trip_request"))
-    record = repository.add("artifact", "request", "trip_request", payload)
+    record = repository.add(request, "trip_request", payload)
     assert record.payload == payload.model_dump(mode="json")
     session.add.assert_called_once_with(record)
     session.flush.assert_called_once()
     session.commit.assert_not_called()
-    session.get.return_value = record
-    assert repository.get("artifact") is record
-    session.get.return_value = None
-    assert repository.get("missing") is None
 
 
-def test_alembic_offline_sql_only():
+def test_legacy_migration_is_preserved_without_execution():
     from pathlib import Path
-    output = StringIO()
-    config = Config(str(Path(__file__).parents[1] / "alembic.ini"), output_buffer=output)
-    config.attributes["database_url"] = "postgresql+psycopg://placeholder:placeholder@localhost/test"
-    command.upgrade(config, "head", sql=True)
-    sql = output.getvalue()
-    for fragment in ["CREATE TABLE trips", "CREATE TABLE workflows", "CREATE TABLE artifacts",
-                     "FOREIGN KEY", "JSONB", "CREATE TRIGGER artifacts_immutable", "ck_workflow_revision"]:
-        assert fragment in sql
+    source = (Path(__file__).parents[1] / 'alembic/versions/0001_initial.py').read_text(encoding='utf-8')
+    assert 'revision = "0001"' in source
+    assert '"workflows"' in source and '"artifacts"' in source

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "trip_id": "trip_001",
+  "trip_id": "10000000-0000-4000-8000-000000000001",
   "status": "feasible",
   "currency": "VND",
   "days": [
@@ -21,13 +21,15 @@
           "estimated_total_cost": {
             "min": 40000,
             "max": 60000
-          }
+          },
+          "price_status": "ESTIMATED"
         }
       ],
       "day_total_cost": {
         "min": 40000,
         "max": 60000
-      }
+      },
+      "price_status": "ESTIMATED"
     },
     {
       "day": 2,
@@ -46,13 +48,15 @@
           "estimated_total_cost": {
             "min": 120000,
             "max": 200000
-          }
+          },
+          "price_status": "ESTIMATED"
         }
       ],
       "day_total_cost": {
         "min": 120000,
         "max": 200000
-      }
+      },
+      "price_status": "ESTIMATED"
     },
     {
       "day": 3,
@@ -71,13 +75,15 @@
           "estimated_total_cost": {
             "min": 30000,
             "max": 50000
-          }
+          },
+          "price_status": "ESTIMATED"
         }
       ],
       "day_total_cost": {
         "min": 30000,
         "max": 50000
-      }
+      },
+      "price_status": "ESTIMATED"
     }
   ],
   "summary": {
@@ -88,7 +94,8 @@
     },
     "total_travel_minutes": 0,
     "objective_value": null,
-    "summary_message": "Fixture viết tay: 3 địa điểm trong 3 ngày; không chạy solver."
+    "summary_message": "Fixture viết tay: 3 địa điểm trong 3 ngày; không chạy solver.",
+    "price_status": "ESTIMATED"
   },
   "dropped_places": [],
   "relaxation_suggestions": [],

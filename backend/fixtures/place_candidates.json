@@ -62,7 +62,7 @@
       "reason": "Dữ liệu minh họa, không tra cứu API."
     },
     "suitability": {
-      "score_places": 92.0,
+      "score_places": 92,
       "matched_interests": [
         "nature"
       ],
@@ -146,7 +146,7 @@
       "reason": "Dữ liệu minh họa, không tra cứu API."
     },
     "suitability": {
-      "score_places": 85.0,
+      "score_places": 85,
       "matched_interests": [
         "food"
       ],
@@ -230,7 +230,7 @@
       "reason": "Dữ liệu minh họa, không tra cứu API."
     },
     "suitability": {
-      "score_places": 78.0,
+      "score_places": 78,
       "matched_interests": [
         "nature"
       ],

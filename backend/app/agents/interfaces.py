@@ -7,6 +7,7 @@ outcomes (missing fields, infeasible, violations) are returned as schema data.
 Cancellation propagates; timeouts/network failures are translated by adapters.
 """
 from datetime import date
+from uuid import UUID
 from typing import Protocol
 
 from app.models.contracts import (
@@ -41,7 +42,7 @@ class BudgetModule(Protocol):
 
 
 class PlanningInputBuilder(Protocol):
-    async def build(self, trip_id: str, request: TripRequest,
+    async def build(self, trip_id: UUID, request: TripRequest,
                     destination: DestinationResult, time_constraints: TimeConstraints,
                     places: list[PlaceCandidate], costs: BudgetResult,
                     *, configuration: dict[str, object]) -> PlanningInput: ...

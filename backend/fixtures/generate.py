@@ -67,7 +67,7 @@ def main():
     for day in planning_times.days:
         day.start_location_id = day.end_location_id = "hotel"
     ids = [p.place_id for p in places] + ["hotel"]
-    planning = PlanningInput(trip_id="trip_001", budget=request.budget,
+    planning = PlanningInput(trip_id="10000000-0000-4000-8000-000000000001", budget=request.budget,
         candidate_places=[dict(place_id=p.place_id, types=p.types, score_places=p.suitability.score_places,
             visit_duration_typical=p.visit_duration.typical_minutes, estimated_total_cost=c.estimated_total_cost,
             price_status=c.price_status, price_confidence_score=c.price_confidence_score,
@@ -84,14 +84,14 @@ def main():
         amount = c.estimated_total_cost.model_dump(exclude={"currency"})
         days.append(dict(day=number,date=day.date, activities=[dict(place_id=p.place_id,types=p.types,
             arrival_time="09:10",start_time="09:10",departure_time="10:10" if number==2 else "10:40",
-            travel_minutes_from_previous=10,estimated_total_cost=amount)],day_total_cost=amount))
-    itinerary=Itinerary(trip_id="trip_001",status="feasible",currency="VND",days=days,
-        summary=dict(total_scheduled_places=3,total_cost=dict(min=190000,max=310000),total_travel_minutes=0,
+            travel_minutes_from_previous=10,estimated_total_cost=amount,price_status="ESTIMATED")],day_total_cost=amount,price_status="ESTIMATED"))
+    itinerary=Itinerary(trip_id="10000000-0000-4000-8000-000000000001",status="feasible",currency="VND",days=days,
+        summary=dict(total_scheduled_places=3,price_status="ESTIMATED",total_cost=dict(min=190000,max=310000),total_travel_minutes=0,
             objective_value=None,summary_message="Fixture viết tay: 3 địa điểm trong 3 ngày; không chạy solver."),
         dropped_places=[],relaxation_suggestions=[],diagnostics=dict(solver_status="feasible",optimality_proven=False,unsatisfied_constraints=[],warnings=[]))
     save("itinerary",itinerary)
     rules=["input_integrity","price_integrity","travel_time","overlap","opening_hours","visit_duration","day_start_window","day_end_window","meal_window","activity_count","rest_time","must_visit","budget","summary_consistency"]
-    save("validation_result", ValidationResult(trip_id="trip_001",is_valid=True,violations=[],warnings=[],checked_rules=rules,
+    save("validation_result", ValidationResult(trip_id="10000000-0000-4000-8000-000000000001",is_valid=True,violations=[],warnings=[],checked_rules=rules,
         recomputed=dict(cost_in_scope=dict(min=190000,max=310000),budget_limit=3000000,total_travel_minutes=0,total_scheduled_places=3),suggested_action="accept"))
 
 

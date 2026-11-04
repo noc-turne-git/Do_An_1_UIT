@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "trip_id": "trip_001",
+  "trip_id": "10000000-0000-4000-8000-000000000001",
   "budget": {
     "amount": 3000000,
     "currency": "VND",
@@ -21,7 +21,7 @@
         "park",
         "tourist_attraction"
       ],
-      "score_places": 92.0,
+      "score_places": 92,
       "visit_duration_typical": 90,
       "estimated_total_cost": {
         "min": 40000,
@@ -72,7 +72,7 @@
         "restaurant",
         "food"
       ],
-      "score_places": 85.0,
+      "score_places": 85,
       "visit_duration_typical": 60,
       "estimated_total_cost": {
         "min": 120000,
@@ -123,7 +123,7 @@
         "park",
         "tourist_attraction"
       ],
-      "score_places": 78.0,
+      "score_places": 78,
       "visit_duration_typical": 90,
       "estimated_total_cost": {
         "min": 30000,
