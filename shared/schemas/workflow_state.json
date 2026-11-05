@@ -1,0 +1,231 @@
+{
+  "$defs": {
+    "ArtifactReferences": {
+      "additionalProperties": false,
+      "properties": {
+        "trip_request_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trip Request Id"
+        },
+        "destination_result_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Destination Result Id"
+        },
+        "time_constraints_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time Constraints Id"
+        },
+        "candidates_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidates Id"
+        },
+        "costed_candidates_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Costed Candidates Id"
+        },
+        "planning_input_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Planning Input Id"
+        },
+        "itinerary_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Itinerary Id"
+        },
+        "validation_result_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Validation Result Id"
+        }
+      },
+      "title": "ArtifactReferences",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Small runtime references/counters; histories and payloads are persisted separately.",
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "trip_id": {
+      "format": "uuid",
+      "title": "Trip Id",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "parsing",
+        "clarifying",
+        "planning",
+        "validating",
+        "awaiting_relaxation",
+        "completed",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "current_step": {
+      "enum": [
+        "request_parser",
+        "destination_agent",
+        "constraint_planner",
+        "place_agent",
+        "budget_module",
+        "planning_input_builder",
+        "planning_engine",
+        "validator",
+        "explainer"
+      ],
+      "title": "Current Step",
+      "type": "string"
+    },
+    "completed_steps": {
+      "items": {
+        "enum": [
+          "request_parser",
+          "destination_agent",
+          "constraint_planner",
+          "place_agent",
+          "budget_module",
+          "planning_input_builder",
+          "planning_engine",
+          "validator",
+          "explainer"
+        ],
+        "type": "string"
+      },
+      "title": "Completed Steps",
+      "type": "array"
+    },
+    "artifacts": {
+      "$ref": "#/$defs/ArtifactReferences"
+    },
+    "clarification_round": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "title": "Clarification Round",
+      "type": "integer"
+    },
+    "max_clarification_rounds": {
+      "default": 3,
+      "maximum": 2147483647,
+      "minimum": 0,
+      "title": "Max Clarification Rounds",
+      "type": "integer"
+    },
+    "destination_round": {
+      "default": 0,
+      "maximum": 2147483647,
+      "minimum": 0,
+      "title": "Destination Round",
+      "type": "integer"
+    },
+    "pending_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Pending Fields",
+      "type": "array"
+    },
+    "retry_count": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "title": "Retry Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "request_id",
+    "trip_id",
+    "status",
+    "current_step",
+    "completed_steps",
+    "artifacts",
+    "clarification_round",
+    "pending_fields",
+    "retry_count"
+  ],
+  "title": "WorkflowState",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

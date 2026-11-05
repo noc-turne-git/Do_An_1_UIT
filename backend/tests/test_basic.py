@@ -7,10 +7,10 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
 
 from app.core.config import Settings
-from app.core.errors import ApplicationError
+from shared.errors import ApplicationError
 from app.main import create_app
-from app.models.contracts import CostRange, TravelMatrix, TripRequest
-from app.services.llm import MockLLMClient, create_llm_client
+from shared.contracts import CostRange, TravelMatrix, TripRequest
+from ai.orchestration.llm import MockLLMClient, create_llm_client
 
 
 def test_health_and_cors():
@@ -63,7 +63,7 @@ def test_mock_llm():
 
 
 def test_contracts():
-    payload = json.loads((Path(__file__).parents[1] / "fixtures/trip_request.json").read_text(encoding="utf-8"))
+    payload = json.loads((Path(__file__).resolve().parents[2] / "shared/samples/trip_request.json").read_text(encoding="utf-8"))
     request = TripRequest.model_validate(payload)
     assert request.budget.amount == 3000000
     payload["unexpected"] = True

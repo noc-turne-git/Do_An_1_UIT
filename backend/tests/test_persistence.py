@@ -5,18 +5,18 @@ import pytest
 from sqlalchemy.dialects.postgresql import dialect
 from sqlalchemy.orm import configure_mappers
 
-from app.core.errors import ApplicationError
+from shared.errors import ApplicationError
 from app.db.base import Base
 from app.db.models import TripRecord, WorkflowRequestRecord, WorkflowArtifactRecord
-from app.models.contracts import TripRequest
+from shared.contracts import TripRequest
 from app.repositories.artifacts import ArtifactRepository
 from app.repositories.workflows import TripRepository, RequestRepository
-from app.services.mock_workflow import fixture
+from ai.orchestration.mock_workflow import fixture
 
 
 def test_core_mapping():
     configure_mappers()
-    assert len(Base.metadata.tables) == 19
+    assert len(Base.metadata.tables) == 20
     assert 'state' not in WorkflowRequestRecord.__table__.c
     assert 'revision' not in WorkflowRequestRecord.__table__.c
     for cls, key in [(TripRecord, 'trip_id'), (WorkflowRequestRecord, 'request_id'),
@@ -74,7 +74,7 @@ def test_artifact_read_filters_owner_in_query():
 
 
 def test_itinerary_projection_keeps_price_status_and_uuid():
-    from app.models.contracts import Itinerary
+    from shared.contracts import Itinerary
     from app.repositories.results import ResultRepository
     from app.db.models import ItineraryActivityRecord
     value = Itinerary.model_validate(fixture('itinerary'))
@@ -90,7 +90,7 @@ def test_itinerary_projection_keeps_price_status_and_uuid():
 
 
 def test_validation_projection_checks_itinerary_and_keeps_findings():
-    from app.models.contracts import ValidationResult
+    from shared.contracts import ValidationResult
     from app.repositories.results import ResultRepository
     from app.db.models import ItineraryRecord, ValidationIssueRecord
     data = fixture('validation_result')
@@ -110,7 +110,7 @@ def test_validation_projection_checks_itinerary_and_keeps_findings():
 @pytest.mark.parametrize('value', [92.0, 92.5, '92', True, -1, 101])
 def test_candidate_score_never_rounds_or_coerces(value):
     from pydantic import ValidationError
-    from app.models.contracts import PlaceCandidate
+    from shared.contracts import PlaceCandidate
     data = fixture('place_candidates')[0]
     data['suitability']['score_places'] = value
     with pytest.raises(ValidationError):
@@ -119,7 +119,7 @@ def test_candidate_score_never_rounds_or_coerces(value):
 
 def test_raw_admission_price_is_text_not_dict():
     from pydantic import ValidationError
-    from app.models.contracts import CostedPlaceCandidate
+    from shared.contracts import CostedPlaceCandidate
     data = fixture('costed_place_candidates')[0]
     data['admission_price_raw'] = 'Người lớn: 50.000đ'
     assert CostedPlaceCandidate.model_validate(data).admission_price_raw == data['admission_price_raw']
@@ -131,7 +131,7 @@ def test_raw_admission_price_is_text_not_dict():
 @pytest.mark.parametrize('level', ['summary', 'day', 'activity'])
 def test_itinerary_requires_explicit_price_status(level):
     from pydantic import ValidationError
-    from app.models.contracts import Itinerary
+    from shared.contracts import Itinerary
     data = fixture('itinerary')
     node = data['summary'] if level == 'summary' else data['days'][0] if level == 'day' else data['days'][0]['activities'][0]
     del node['price_status']

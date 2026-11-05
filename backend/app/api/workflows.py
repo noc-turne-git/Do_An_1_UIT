@@ -6,11 +6,11 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 from app.api.auth import get_current_user_id
 from app.db.session import get_session
-from app.models.contracts import TripRequest
+from shared.contracts import TripRequest
 from app.repositories.workflows import TripRepository, RequestRepository
 from app.repositories.artifacts import ArtifactRepository
 from app.services.persistence import WorkflowPersistence
-from app.services.graph_workflow import LangGraphOrchestrator, GraphRun
+from ai.interface import LangGraphOrchestrator, GraphRun
 from app.services.workflow_factory import get_graph_orchestrator
 
 router = APIRouter(prefix='/api/v1', tags=['Persistence'])
@@ -76,7 +76,7 @@ def latest_artifact(request_id: UUID, artifact_type: str, user: UUID = Depends(g
         raise HTTPException(422, 'Invalid artifact type')
     row = RequestRepository(session, user).get(request_id)
     if row.graph_snapshot is not None:
-        from app.services.workflow_state import STEPS, REFS
+        from ai.orchestration.workflow_state import STEPS, REFS
         run = WorkflowPersistence(session, user).load_graph(request_id)
         step = next(s for s, kind in TYPES.items() if kind == artifact_type)
         identifier = getattr(run.state.artifacts, REFS[STEPS.index(step)])

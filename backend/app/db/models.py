@@ -53,15 +53,28 @@ class TripRecord(Base):
     requests: Mapped[list["WorkflowRequestRecord"]] = relationship(viewonly=True)
     messages: Mapped[list["MessageRecord"]] = relationship(viewonly=True)
 
+class ConversationRecord(Base):
+    __tablename__ = 'conversations'
+    conversation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()'))
+    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    trip_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('trips.trip_id', ondelete='SET NULL'), nullable=True, unique=True)
+    request_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('workflow_requests.request_id', ondelete='SET NULL'), nullable=True)
+    trip_request: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False)
+    __table_args__ = (sa.Index('conversations_user_idx', 'user_id'),)
+
+
 class MessageRecord(Base):
     __tablename__ = "messages"
     message_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, nullable=False, server_default=sa.text('gen_random_uuid()'))
-    trip_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('trips.trip_id', ondelete="CASCADE"), nullable=False)
+    trip_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('trips.trip_id', ondelete="CASCADE"), nullable=True)
+    conversation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('conversations.conversation_id', ondelete='CASCADE'), nullable=False)
     role: Mapped[str] = mapped_column(message_role_enum, nullable=False)
     content: Mapped[str] = mapped_column(sa.Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()'))
     __table_args__ = (
         sa.Index('messages_trip_idx', 'trip_id', 'created_at'),
+        sa.Index('messages_conversation_idx', 'conversation_id', 'created_at'),
     )
 
     trip: Mapped["TripRecord"] = relationship(foreign_keys=[trip_id])

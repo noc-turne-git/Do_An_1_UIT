@@ -35,7 +35,7 @@ class PlaceRepository(OwnedRepository):
 
     def save_costs(self, request_id, costs):
         from sqlalchemy import select
-        from app.core.errors import ApplicationError
+        from shared.errors import ApplicationError
         self.request(request_id, lock=True)
         for cost in costs.places:
             row = self.session.scalar(select(RequestPlaceCandidateRecord).where(

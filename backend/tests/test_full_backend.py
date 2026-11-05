@@ -20,9 +20,9 @@ from sqlalchemy.orm import configure_mappers
 from sqlalchemy.schema import CreateTable
 
 import app
-from app.agents import interfaces
+from ai.agents import interfaces
 from app.core.config import Settings
-from app.core.errors import ApplicationError
+from shared.errors import ApplicationError
 from app.db.base import Base
 from app.db.models import ArtifactRecord, TripRecord, WorkflowRecord
 from app.db.session import Database, postgres_url
@@ -31,10 +31,10 @@ from app.models import (CostedPlaceCandidate, DestinationResult, Itinerary,
                         PlaceCandidate, PlanningInput, TimeConstraints, TripRequest,
                         ValidationResult, WorkflowState)
 from app.repositories.artifacts import ArtifactRepository
-from app.services.constraint_planner import DeterministicConstraintPlanner, PlannerDefaults
-from app.services.mock_workflow import fixture, mock_components
-from app.services.graph_workflow import LangGraphOrchestrator, GraphRun
-from app.services.workflow_state import STEPS
+from ai.planning.constraint_planner import DeterministicConstraintPlanner, PlannerDefaults
+from ai.orchestration.mock_workflow import fixture, mock_components
+from ai.orchestration.graph_workflow import LangGraphOrchestrator, GraphRun
+from ai.orchestration.workflow_state import STEPS
 
 METHODS = ("parse", "select", "build", "find", "estimate", "build", "plan", "validate", "explain")
 CONTRACTS = (
@@ -409,7 +409,7 @@ def test_config_environment_overrides_dotenv(tmp_path, monkeypatch):
 
 def test_orm_metadata_postgresql_ddl_and_relationships():
     configure_mappers()
-    assert len(Base.metadata.tables) == 19
+    assert len(Base.metadata.tables) == 20
     assert 'workflows' not in Base.metadata.tables and 'artifacts' not in Base.metadata.tables
     for table in Base.metadata.sorted_tables:
         assert 'CREATE TABLE' in str(CreateTable(table).compile(dialect=postgresql.dialect()))
@@ -418,9 +418,11 @@ def test_orm_metadata_postgresql_ddl_and_relationships():
 
 
 @pytest.mark.parametrize("failure", [False, True])
-def test_session_transaction_context_and_cleanup(failure):
+def test_session_transaction_context_and_cleanup(failure, monkeypatch):
+    monkeypatch.setattr('app.db.session.event.listen', lambda *args: None)
     database = Database(Settings(_env_file=None, database_url=None))
     session = MagicMock()
+    session.info = {}
     session.__enter__.return_value = session
     factory = MagicMock(return_value=session)
     database.sessions = factory

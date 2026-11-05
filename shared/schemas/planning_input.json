@@ -1,0 +1,814 @@
+{
+  "$defs": {
+    "ActivityCount": {
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "$ref": "#/$defs/Constraint_Annotated_int__Strict_strict_True___FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"
+        },
+        "target": {
+          "$ref": "#/$defs/Constraint_Annotated_int__Strict_strict_True___FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"
+        },
+        "max": {
+          "$ref": "#/$defs/Constraint_Annotated_int__Strict_strict_True___FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"
+        }
+      },
+      "required": [
+        "min",
+        "target",
+        "max"
+      ],
+      "title": "ActivityCount",
+      "type": "object"
+    },
+    "ActivityWindow": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/Constraint_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern_____01___d_2_0-3___0-5___d_______"
+        },
+        "end": {
+          "$ref": "#/$defs/Constraint_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern_____01___d_2_0-3___0-5___d_______"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "ActivityWindow",
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Amount"
+        },
+        "currency": {
+          "title": "Currency",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Scope"
+        },
+        "includes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Includes",
+          "type": "array"
+        },
+        "excludes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Excludes",
+          "type": "array"
+        },
+        "flexibility": {
+          "title": "Flexibility",
+          "type": "string"
+        },
+        "max_overrun_percent": {
+          "minimum": 0,
+          "title": "Max Overrun Percent",
+          "type": "number"
+        },
+        "preferences": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preferences"
+        }
+      },
+      "required": [
+        "amount",
+        "currency",
+        "scope",
+        "includes",
+        "excludes",
+        "flexibility",
+        "max_overrun_percent"
+      ],
+      "title": "Budget",
+      "type": "object"
+    },
+    "Constraint_Annotated_int__Strict_strict_True___FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "is_hard": {
+          "title": "Is Hard",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value",
+        "is_hard"
+      ],
+      "title": "Constraint[Annotated[int, Strict(strict=True), FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=2147483647)])]]",
+      "type": "object"
+    },
+    "Constraint_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern_____01___d_2_0-3___0-5___d_______": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "title": "Value",
+          "type": "string"
+        },
+        "is_hard": {
+          "title": "Is Hard",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value",
+        "is_hard"
+      ],
+      "title": "Constraint[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[_PydanticGeneralMetadata(pattern='^([01]\\\\d|2[0-3]):[0-5]\\\\d$')])]]",
+      "type": "object"
+    },
+    "Constraint_list_str__": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Value",
+          "type": "array"
+        },
+        "is_hard": {
+          "title": "Is Hard",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value",
+        "is_hard"
+      ],
+      "title": "Constraint[list[str]]",
+      "type": "object"
+    },
+    "Constraint_str_": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "is_hard": {
+          "title": "Is Hard",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value",
+        "is_hard"
+      ],
+      "title": "Constraint[str]",
+      "type": "object"
+    },
+    "CurrencyCostRange": {
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Min",
+          "type": "integer"
+        },
+        "max": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Max",
+          "type": "integer"
+        },
+        "currency": {
+          "title": "Currency",
+          "type": "string"
+        }
+      },
+      "required": [
+        "min",
+        "max",
+        "currency"
+      ],
+      "title": "CurrencyCostRange",
+      "type": "object"
+    },
+    "MealWindow": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "start": {
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "title": "Start",
+          "type": "string"
+        },
+        "end": {
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "title": "End",
+          "type": "string"
+        },
+        "duration_minutes": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Duration Minutes",
+          "type": "integer"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "start",
+        "end",
+        "duration_minutes",
+        "required"
+      ],
+      "title": "MealWindow",
+      "type": "object"
+    },
+    "OpeningHours": {
+      "additionalProperties": false,
+      "properties": {
+        "timezone": {
+          "title": "Timezone",
+          "type": "string"
+        },
+        "weekly_schedule": {
+          "items": {
+            "$ref": "#/$defs/WeeklyHours"
+          },
+          "title": "Weekly Schedule",
+          "type": "array"
+        },
+        "special_hours": {
+          "items": {
+            "$ref": "#/$defs/SpecialHours"
+          },
+          "title": "Special Hours",
+          "type": "array"
+        }
+      },
+      "required": [
+        "timezone",
+        "weekly_schedule",
+        "special_hours"
+      ],
+      "title": "OpeningHours",
+      "type": "object"
+    },
+    "Optimization": {
+      "additionalProperties": false,
+      "properties": {
+        "objective": {
+          "const": "maximize_total_utility",
+          "title": "Objective",
+          "type": "string"
+        },
+        "allow_optional_places_to_be_skipped": {
+          "title": "Allow Optional Places To Be Skipped",
+          "type": "boolean"
+        },
+        "cost_basis_hard_limit": {
+          "const": "max",
+          "title": "Cost Basis Hard Limit",
+          "type": "string"
+        },
+        "cost_basis_objective": {
+          "const": "midpoint",
+          "title": "Cost Basis Objective",
+          "type": "string"
+        }
+      },
+      "required": [
+        "objective",
+        "allow_optional_places_to_be_skipped",
+        "cost_basis_hard_limit",
+        "cost_basis_objective"
+      ],
+      "title": "Optimization",
+      "type": "object"
+    },
+    "PlanningPlace": {
+      "additionalProperties": false,
+      "properties": {
+        "place_id": {
+          "title": "Place Id",
+          "type": "string"
+        },
+        "types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Types",
+          "type": "array"
+        },
+        "score_places": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Score Places",
+          "type": "integer"
+        },
+        "visit_duration_typical": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Visit Duration Typical",
+          "type": "integer"
+        },
+        "estimated_total_cost": {
+          "$ref": "#/$defs/CurrencyCostRange"
+        },
+        "price_status": {
+          "enum": [
+            "ESTIMATED",
+            "UNKNOWN",
+            "VERIFIED_FREE"
+          ],
+          "title": "Price Status",
+          "type": "string"
+        },
+        "price_confidence_score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Price Confidence Score"
+        },
+        "latitude": {
+          "maximum": 90,
+          "minimum": -90,
+          "title": "Latitude",
+          "type": "number"
+        },
+        "longitude": {
+          "maximum": 180,
+          "minimum": -180,
+          "title": "Longitude",
+          "type": "number"
+        },
+        "cluster_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cluster Id"
+        },
+        "opening_hours": {
+          "$ref": "#/$defs/OpeningHours"
+        }
+      },
+      "required": [
+        "place_id",
+        "types",
+        "score_places",
+        "visit_duration_typical",
+        "estimated_total_cost",
+        "price_status",
+        "price_confidence_score",
+        "latitude",
+        "longitude",
+        "cluster_id",
+        "opening_hours"
+      ],
+      "title": "PlanningPlace",
+      "type": "object"
+    },
+    "SolverConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "time_limit_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Time Limit Seconds",
+          "type": "integer"
+        },
+        "random_seed": {
+          "title": "Random Seed",
+          "type": "integer"
+        },
+        "max_retries": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Max Retries",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "time_limit_seconds",
+        "random_seed",
+        "max_retries"
+      ],
+      "title": "SolverConfig",
+      "type": "object"
+    },
+    "SpecialHours": {
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "format": "date",
+          "title": "Date",
+          "type": "string"
+        },
+        "open": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Open"
+        },
+        "close": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Close"
+        },
+        "is_closed": {
+          "title": "Is Closed",
+          "type": "boolean"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "date",
+        "open",
+        "close",
+        "is_closed"
+      ],
+      "title": "SpecialHours",
+      "type": "object"
+    },
+    "TimeConstraints": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0",
+          "pattern": "^1\\.\\d+$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "days": {
+          "items": {
+            "$ref": "#/$defs/TimeDay"
+          },
+          "title": "Days",
+          "type": "array"
+        }
+      },
+      "required": [
+        "days"
+      ],
+      "title": "TimeConstraints",
+      "type": "object"
+    },
+    "TimeDay": {
+      "additionalProperties": false,
+      "properties": {
+        "day": {
+          "minimum": 1,
+          "title": "Day",
+          "type": "integer"
+        },
+        "date": {
+          "format": "date",
+          "title": "Date",
+          "type": "string"
+        },
+        "activity_window": {
+          "$ref": "#/$defs/ActivityWindow"
+        },
+        "target_activity_count": {
+          "$ref": "#/$defs/ActivityCount"
+        },
+        "pace": {
+          "$ref": "#/$defs/Constraint_str_"
+        },
+        "transport_mode": {
+          "$ref": "#/$defs/Constraint_list_str__"
+        },
+        "meal_windows": {
+          "items": {
+            "$ref": "#/$defs/MealWindow"
+          },
+          "title": "Meal Windows",
+          "type": "array"
+        },
+        "rest_minutes": {
+          "$ref": "#/$defs/Constraint_Annotated_int__Strict_strict_True___FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"
+        },
+        "preferences": {
+          "items": {
+            "$ref": "#/$defs/Constraint_str_"
+          },
+          "title": "Preferences",
+          "type": "array"
+        },
+        "start_location_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start Location Id"
+        },
+        "end_location_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Location Id"
+        }
+      },
+      "required": [
+        "day",
+        "date",
+        "activity_window",
+        "target_activity_count",
+        "pace",
+        "transport_mode",
+        "meal_windows",
+        "rest_minutes",
+        "preferences"
+      ],
+      "title": "TimeDay",
+      "type": "object"
+    },
+    "TravelMatrix": {
+      "additionalProperties": false,
+      "properties": {
+        "locations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Locations",
+          "type": "array"
+        },
+        "mode": {
+          "title": "Mode",
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "minutes",
+            "m"
+          ],
+          "title": "Unit",
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "items": {
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "title": "Values",
+          "type": "array"
+        }
+      },
+      "required": [
+        "locations",
+        "mode",
+        "unit",
+        "values"
+      ],
+      "title": "TravelMatrix",
+      "type": "object"
+    },
+    "WeeklyHours": {
+      "additionalProperties": false,
+      "properties": {
+        "weekday": {
+          "maximum": 7,
+          "minimum": 1,
+          "title": "Weekday",
+          "type": "integer"
+        },
+        "open": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Open"
+        },
+        "close": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Close"
+        },
+        "is_closed": {
+          "title": "Is Closed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "weekday",
+        "open",
+        "close",
+        "is_closed"
+      ],
+      "title": "WeeklyHours",
+      "type": "object"
+    },
+    "Weights": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha": {
+          "title": "Alpha",
+          "type": "number"
+        },
+        "beta": {
+          "title": "Beta",
+          "type": "number"
+        },
+        "gamma": {
+          "title": "Gamma",
+          "type": "number"
+        },
+        "delta": {
+          "title": "Delta",
+          "type": "number"
+        },
+        "normalized": {
+          "title": "Normalized",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "normalized"
+      ],
+      "title": "Weights",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "trip_id": {
+      "format": "uuid",
+      "title": "Trip Id",
+      "type": "string"
+    },
+    "budget": {
+      "$ref": "#/$defs/Budget"
+    },
+    "candidate_places": {
+      "items": {
+        "$ref": "#/$defs/PlanningPlace"
+      },
+      "title": "Candidate Places",
+      "type": "array"
+    },
+    "must_visit_place_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Must Visit Place Ids",
+      "type": "array"
+    },
+    "avoid_place_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Avoid Place Ids",
+      "type": "array"
+    },
+    "time_constraints": {
+      "$ref": "#/$defs/TimeConstraints"
+    },
+    "travel_time_matrix": {
+      "$ref": "#/$defs/TravelMatrix"
+    },
+    "travel_distance_matrix": {
+      "$ref": "#/$defs/TravelMatrix"
+    },
+    "weights": {
+      "$ref": "#/$defs/Weights"
+    },
+    "optimization": {
+      "$ref": "#/$defs/Optimization"
+    },
+    "solver_config": {
+      "$ref": "#/$defs/SolverConfig"
+    }
+  },
+  "required": [
+    "trip_id",
+    "budget",
+    "candidate_places",
+    "must_visit_place_ids",
+    "avoid_place_ids",
+    "time_constraints",
+    "travel_time_matrix",
+    "travel_distance_matrix",
+    "weights",
+    "optimization",
+    "solver_config"
+  ],
+  "title": "PlanningInput",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

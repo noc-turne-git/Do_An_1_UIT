@@ -1,0 +1,365 @@
+{
+  "$defs": {
+    "Activity": {
+      "additionalProperties": false,
+      "properties": {
+        "place_id": {
+          "title": "Place Id",
+          "type": "string"
+        },
+        "types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Types",
+          "type": "array"
+        },
+        "arrival_time": {
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "title": "Arrival Time",
+          "type": "string"
+        },
+        "start_time": {
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "title": "Start Time",
+          "type": "string"
+        },
+        "departure_time": {
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "title": "Departure Time",
+          "type": "string"
+        },
+        "travel_minutes_from_previous": {
+          "anyOf": [
+            {
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Travel Minutes From Previous"
+        },
+        "estimated_total_cost": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "price_status": {
+          "enum": [
+            "ESTIMATED",
+            "UNKNOWN",
+            "VERIFIED_FREE"
+          ],
+          "title": "Price Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "place_id",
+        "types",
+        "arrival_time",
+        "start_time",
+        "departure_time",
+        "travel_minutes_from_previous",
+        "estimated_total_cost",
+        "price_status"
+      ],
+      "title": "Activity",
+      "type": "object"
+    },
+    "CostRange": {
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Min",
+          "type": "integer"
+        },
+        "max": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Max",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "title": "CostRange",
+      "type": "object"
+    },
+    "Diagnostics": {
+      "additionalProperties": false,
+      "properties": {
+        "solver_status": {
+          "enum": [
+            "feasible",
+            "infeasible",
+            "partial",
+            "error"
+          ],
+          "title": "Solver Status",
+          "type": "string"
+        },
+        "optimality_proven": {
+          "title": "Optimality Proven",
+          "type": "boolean"
+        },
+        "unsatisfied_constraints": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unsatisfied Constraints",
+          "type": "array"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "solver_status",
+        "optimality_proven",
+        "unsatisfied_constraints",
+        "warnings"
+      ],
+      "title": "Diagnostics",
+      "type": "object"
+    },
+    "DroppedPlace": {
+      "additionalProperties": false,
+      "properties": {
+        "place_id": {
+          "title": "Place Id",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "place_id",
+        "reason"
+      ],
+      "title": "DroppedPlace",
+      "type": "object"
+    },
+    "ItineraryDay": {
+      "additionalProperties": false,
+      "properties": {
+        "day": {
+          "title": "Day",
+          "type": "integer"
+        },
+        "date": {
+          "format": "date",
+          "title": "Date",
+          "type": "string"
+        },
+        "activities": {
+          "items": {
+            "$ref": "#/$defs/Activity"
+          },
+          "title": "Activities",
+          "type": "array"
+        },
+        "day_total_cost": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "price_status": {
+          "enum": [
+            "ESTIMATED",
+            "UNKNOWN",
+            "VERIFIED_FREE"
+          ],
+          "title": "Price Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "day",
+        "date",
+        "activities",
+        "day_total_cost",
+        "price_status"
+      ],
+      "title": "ItineraryDay",
+      "type": "object"
+    },
+    "RelaxationProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "constraint_type": {
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        }
+      },
+      "required": [
+        "constraint_type",
+        "description",
+        "payload"
+      ],
+      "title": "RelaxationProposal",
+      "type": "object"
+    },
+    "Summary": {
+      "additionalProperties": false,
+      "properties": {
+        "total_scheduled_places": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Total Scheduled Places",
+          "type": "integer"
+        },
+        "total_cost": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "price_status": {
+          "enum": [
+            "ESTIMATED",
+            "UNKNOWN",
+            "VERIFIED_FREE"
+          ],
+          "title": "Price Status",
+          "type": "string"
+        },
+        "total_travel_minutes": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Total Travel Minutes",
+          "type": "integer"
+        },
+        "objective_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Objective Value"
+        },
+        "summary_message": {
+          "title": "Summary Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "total_scheduled_places",
+        "total_cost",
+        "price_status",
+        "total_travel_minutes",
+        "objective_value",
+        "summary_message"
+      ],
+      "title": "Summary",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "trip_id": {
+      "format": "uuid",
+      "title": "Trip Id",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "feasible",
+        "infeasible",
+        "partial",
+        "error"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "currency": {
+      "title": "Currency",
+      "type": "string"
+    },
+    "days": {
+      "items": {
+        "$ref": "#/$defs/ItineraryDay"
+      },
+      "title": "Days",
+      "type": "array"
+    },
+    "summary": {
+      "$ref": "#/$defs/Summary"
+    },
+    "dropped_places": {
+      "items": {
+        "$ref": "#/$defs/DroppedPlace"
+      },
+      "title": "Dropped Places",
+      "type": "array"
+    },
+    "relaxation_suggestions": {
+      "items": {
+        "$ref": "#/$defs/RelaxationProposal"
+      },
+      "title": "Relaxation Suggestions",
+      "type": "array"
+    },
+    "diagnostics": {
+      "$ref": "#/$defs/Diagnostics"
+    }
+  },
+  "required": [
+    "trip_id",
+    "status",
+    "currency",
+    "days",
+    "summary",
+    "dropped_places",
+    "relaxation_suggestions",
+    "diagnostics"
+  ],
+  "title": "Itinerary",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

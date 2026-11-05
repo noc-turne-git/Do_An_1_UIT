@@ -29,3 +29,13 @@ dist-ssr
 .pytest_cache/
 backend/.pytest-*/
 backend/.tmp-*/
+
+# Monorepo Python and AI runtime artifacts
+__pycache__/
+*.py[cod]
+.venv/
+*.jsonl
+ai/logs/*
+!ai/logs/.gitkeep
+build/
+.tmp-monorepo-wheels/

@@ -1,12 +1,26 @@
 from collections.abc import Iterator
+import logging
 
 from fastapi import Request
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
-from app.core.errors import ApplicationError
+from shared.errors import ApplicationError
+from app.core.logging import log_message
+from app.db.models import MessageRecord
+
+logger = logging.getLogger(__name__)
+
+
+def collect_messages(session, flush_context):
+    for row in session.new:
+        if isinstance(row, MessageRecord):
+            session.info.setdefault('conversation_messages', []).append(dict(
+                message_id=row.message_id, trip_id=row.trip_id,
+                conversation_id=row.conversation_id,
+                role=row.role, content=row.content))
 
 
 def postgres_url(value: str):
@@ -29,8 +43,18 @@ class Database:
         if self.sessions is None:
             raise ApplicationError("database_not_configured", "DATABASE_URL is not configured")
         with self.sessions() as session:
-            with session.begin():
-                yield session
+            event.listen(session, 'after_flush', collect_messages)
+            try:
+                with session.begin():
+                    yield session
+                if session.info.get('chat_message_id'):
+                    logger.info('chat.message_committed message_id=%s', session.info['chat_message_id'])
+                for message in session.info.pop('conversation_messages', []):
+                    log_message(**message)
+            except Exception:
+                if session.info.get('chat_message_id'):
+                    logger.warning('chat.message_rolled_back message_id=%s', session.info['chat_message_id'])
+                raise
 
     def dispose(self) -> None:
         if self.engine is not None:

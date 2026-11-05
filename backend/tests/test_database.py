@@ -1,7 +1,7 @@
 """Opt-in local integration tests. Never read DATABASE_URL or execute old Alembic."""
 import os
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 import asyncio
 from datetime import date
 
@@ -11,14 +11,14 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 
 from app.core.config import Settings
-from app.core.errors import ApplicationError
+from shared.errors import ApplicationError
 from app.db.session import Database
 from app.db.models import WorkflowArtifactRecord, WorkflowRequestRecord
-from app.models.contracts import TripRequest
+from shared.contracts import TripRequest
 from app.repositories.workflows import TripRepository, RequestRepository
 from app.repositories.artifacts import ArtifactRepository
-from app.services.mock_workflow import fixture, mock_components
-from app.services.graph_workflow import LangGraphOrchestrator
+from ai.orchestration.mock_workflow import fixture, mock_components
+from ai.orchestration.graph_workflow import LangGraphOrchestrator
 from app.services.persistence import WorkflowPersistence
 
 ROOT = Path(__file__).parents[1]
@@ -72,6 +72,49 @@ def seed(db):
         trip = TripRepository(session, user).create(title='test')
         request = RequestRepository(session, user).create(trip.trip_id)
         return user, trip.trip_id, request.request_id
+
+
+@pytest.mark.postgres
+def test_conversation_to_trip_with_real_persistence(database):
+    from fastapi.testclient import TestClient
+    from app.api.auth import get_current_user_id
+    from app.db.session import get_session
+    from app.main import create_app
+    from app.db.models import TripRecord, MessageRecord, ConversationRecord
+    user = uuid4()
+    with database.engine.begin() as connection:
+        connection.execute(text('INSERT INTO auth.users(id) VALUES (:id)'), {'id': user})
+    app = create_app(Settings(_env_file=None))
+    app.dependency_overrides[get_current_user_id] = lambda: user
+    app.dependency_overrides[get_session] = database.session
+    with TestClient(app) as client:
+        first = client.post('/api/v1/chat/messages', json={'content': 'Travel ideas'}).json()
+        identifier = first['conversation_id']
+        for content in ['Da Lat', 'Two adults']:
+            assert client.post('/api/v1/chat/messages', json={
+                'conversation_id': identifier, 'content': content}).status_code == 201
+        with database.sessions() as session:
+            assert session.scalar(select(func.count()).select_from(TripRecord).where(TripRecord.user_id == user)) == 0
+        assert len(client.get(f'/api/v1/chat/conversations/{identifier}/messages').json()) == 3
+        assert client.get(f'/api/v1/chat/conversations/{identifier}').json()['trip_id'] is None
+        url = f'/api/v1/chat/conversations/{identifier}/prepare-trip'
+        payload = fixture('trip_request')
+        payload['budget']['amount'] = None
+        assert client.post(url, json={'trip_request': payload}).status_code == 400
+        payload = fixture('trip_request')
+        response = client.post(url, json={'trip_request': payload})
+        assert response.status_code == 200, response.text
+        assert client.post(url, json={'trip_request': payload}).json() == response.json()
+        with database.sessions() as session:
+            assert session.scalar(select(func.count()).select_from(TripRecord).where(TripRecord.user_id == user)) == 1
+            conversation = session.get(ConversationRecord, UUID(identifier))
+            assert conversation.trip_request == TripRequest.model_validate(payload).model_dump(mode='json')
+            assert session.get(WorkflowRequestRecord, conversation.request_id).trip_id == conversation.trip_id
+    # A new browser session recovers the same conversation from the URL ID.
+    with TestClient(app) as client:
+        assert len(client.get(f'/api/v1/chat/conversations/{identifier}/messages').json()) == 3
+        app.dependency_overrides[get_current_user_id] = uuid4
+        assert client.get(f'/api/v1/chat/conversations/{identifier}/messages').status_code == 404
 
 
 @pytest.mark.postgres
@@ -237,7 +280,7 @@ def test_replan_persists_distinct_normalized_versions(database):
     components = mock_components()
     calls = 0
     async def validate(itinerary, planning_input, **kwargs):
-        from app.models.contracts import ValidationResult
+        from shared.contracts import ValidationResult
         nonlocal calls
         calls += 1
         data = fixture('validation_result')
@@ -280,7 +323,7 @@ def test_engine_error_is_persisted_with_nullable_result_ids(database):
 
 @pytest.mark.postgres
 def test_graph_snapshot_restart_resume(database):
-    from app.services.graph_workflow import LangGraphOrchestrator
+    from ai.orchestration.graph_workflow import LangGraphOrchestrator
     user, trip_id, request_id = seed(database)
     missing = TripRequest.model_validate(fixture('trip_request'))
     missing.destination.city = None

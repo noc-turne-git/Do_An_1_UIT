@@ -1,0 +1,265 @@
+{
+  "$defs": {
+    "ActivityCount": {
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "$ref": "#/$defs/Constraint_Annotated_int__Strict_strict_True___FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"
+        },
+        "target": {
+          "$ref": "#/$defs/Constraint_Annotated_int__Strict_strict_True___FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"
+        },
+        "max": {
+          "$ref": "#/$defs/Constraint_Annotated_int__Strict_strict_True___FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"
+        }
+      },
+      "required": [
+        "min",
+        "target",
+        "max"
+      ],
+      "title": "ActivityCount",
+      "type": "object"
+    },
+    "ActivityWindow": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/Constraint_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern_____01___d_2_0-3___0-5___d_______"
+        },
+        "end": {
+          "$ref": "#/$defs/Constraint_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern_____01___d_2_0-3___0-5___d_______"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "ActivityWindow",
+      "type": "object"
+    },
+    "Constraint_Annotated_int__Strict_strict_True___FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "is_hard": {
+          "title": "Is Hard",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value",
+        "is_hard"
+      ],
+      "title": "Constraint[Annotated[int, Strict(strict=True), FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=2147483647)])]]",
+      "type": "object"
+    },
+    "Constraint_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern_____01___d_2_0-3___0-5___d_______": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "title": "Value",
+          "type": "string"
+        },
+        "is_hard": {
+          "title": "Is Hard",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value",
+        "is_hard"
+      ],
+      "title": "Constraint[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[_PydanticGeneralMetadata(pattern='^([01]\\\\d|2[0-3]):[0-5]\\\\d$')])]]",
+      "type": "object"
+    },
+    "Constraint_list_str__": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Value",
+          "type": "array"
+        },
+        "is_hard": {
+          "title": "Is Hard",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value",
+        "is_hard"
+      ],
+      "title": "Constraint[list[str]]",
+      "type": "object"
+    },
+    "Constraint_str_": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "is_hard": {
+          "title": "Is Hard",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value",
+        "is_hard"
+      ],
+      "title": "Constraint[str]",
+      "type": "object"
+    },
+    "MealWindow": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "start": {
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "title": "Start",
+          "type": "string"
+        },
+        "end": {
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "title": "End",
+          "type": "string"
+        },
+        "duration_minutes": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Duration Minutes",
+          "type": "integer"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "start",
+        "end",
+        "duration_minutes",
+        "required"
+      ],
+      "title": "MealWindow",
+      "type": "object"
+    },
+    "TimeDay": {
+      "additionalProperties": false,
+      "properties": {
+        "day": {
+          "minimum": 1,
+          "title": "Day",
+          "type": "integer"
+        },
+        "date": {
+          "format": "date",
+          "title": "Date",
+          "type": "string"
+        },
+        "activity_window": {
+          "$ref": "#/$defs/ActivityWindow"
+        },
+        "target_activity_count": {
+          "$ref": "#/$defs/ActivityCount"
+        },
+        "pace": {
+          "$ref": "#/$defs/Constraint_str_"
+        },
+        "transport_mode": {
+          "$ref": "#/$defs/Constraint_list_str__"
+        },
+        "meal_windows": {
+          "items": {
+            "$ref": "#/$defs/MealWindow"
+          },
+          "title": "Meal Windows",
+          "type": "array"
+        },
+        "rest_minutes": {
+          "$ref": "#/$defs/Constraint_Annotated_int__Strict_strict_True___FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"
+        },
+        "preferences": {
+          "items": {
+            "$ref": "#/$defs/Constraint_str_"
+          },
+          "title": "Preferences",
+          "type": "array"
+        },
+        "start_location_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start Location Id"
+        },
+        "end_location_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Location Id"
+        }
+      },
+      "required": [
+        "day",
+        "date",
+        "activity_window",
+        "target_activity_count",
+        "pace",
+        "transport_mode",
+        "meal_windows",
+        "rest_minutes",
+        "preferences"
+      ],
+      "title": "TimeDay",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "days": {
+      "items": {
+        "$ref": "#/$defs/TimeDay"
+      },
+      "title": "Days",
+      "type": "array"
+    }
+  },
+  "required": [
+    "days"
+  ],
+  "title": "TimeConstraints",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

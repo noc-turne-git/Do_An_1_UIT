@@ -4,9 +4,8 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
 
-from app.models.contracts import TripRequest
-from app.services.graph_workflow import LangGraphOrchestrator
-from app.services.workflow_state import WorkflowRun
+from shared.contracts import TripRequest
+from ai.interface import LangGraphOrchestrator, WorkflowRun
 from app.services.workflow_factory import get_graph_orchestrator
 
 router = APIRouter(prefix="/api/v1/dev/workflows", tags=["Development/Mock"])

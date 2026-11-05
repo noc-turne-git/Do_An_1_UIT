@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
-from app.core.errors import ApplicationError
+from shared.errors import ApplicationError
 from app.db.models import (ItineraryRecord, ItineraryDayRecord, ItineraryActivityRecord,
     ItineraryDroppedPlaceRecord, RelaxationSuggestionRecord, ValidationResultRecord, ValidationIssueRecord)
 from app.repositories.workflows import OwnedRepository

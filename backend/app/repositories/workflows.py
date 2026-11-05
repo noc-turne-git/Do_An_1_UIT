@@ -5,7 +5,7 @@ user_id must come from verified authentication. Caller owns the transaction.
 from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from app.core.errors import ApplicationError
+from shared.errors import ApplicationError
 from app.db.models import TripRecord, WorkflowRequestRecord
 
 

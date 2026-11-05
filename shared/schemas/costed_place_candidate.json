@@ -1,0 +1,159 @@
+{
+  "$defs": {
+    "CurrencyCostRange": {
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Min",
+          "type": "integer"
+        },
+        "max": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Max",
+          "type": "integer"
+        },
+        "currency": {
+          "title": "Currency",
+          "type": "string"
+        }
+      },
+      "required": [
+        "min",
+        "max",
+        "currency"
+      ],
+      "title": "CurrencyCostRange",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "place_id": {
+      "title": "Place Id",
+      "type": "string"
+    },
+    "google_place_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Google Place Id"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "category": {
+      "title": "Category",
+      "type": "string"
+    },
+    "types": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Types",
+      "type": "array"
+    },
+    "address": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Address"
+    },
+    "score_places": {
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Score Places",
+      "type": "integer"
+    },
+    "price_status": {
+      "enum": [
+        "ESTIMATED",
+        "UNKNOWN",
+        "VERIFIED_FREE"
+      ],
+      "title": "Price Status",
+      "type": "string"
+    },
+    "price_confidence_score": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Price Confidence Score"
+    },
+    "estimated_total_cost": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CurrencyCostRange"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "admission_price_raw": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Admission Price Raw"
+    },
+    "score_budget": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Score Budget"
+    }
+  },
+  "required": [
+    "place_id",
+    "google_place_id",
+    "name",
+    "category",
+    "types",
+    "address",
+    "score_places",
+    "price_status",
+    "price_confidence_score",
+    "estimated_total_cost"
+  ],
+  "title": "CostedPlaceCandidate",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

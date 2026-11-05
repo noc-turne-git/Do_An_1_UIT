@@ -1,7 +1,7 @@
 from uuid import UUID, uuid4
 from sqlalchemy import select
 from app.db.models import ArtifactRecord, TripRecord, WorkflowRequestRecord
-from app.models.contracts import Contract
+from shared.contracts import Contract
 from app.repositories.workflows import OwnedRepository
 
 

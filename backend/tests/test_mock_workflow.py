@@ -6,12 +6,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
-from app.core.errors import ApplicationError
+from shared.errors import ApplicationError
 from app.main import create_app
-from app.models.contracts import TripRequest, WorkflowState
-from app.services.mock_workflow import fixture, mock_components
-from app.services.graph_workflow import LangGraphOrchestrator
-from app.services.workflow_state import STEPS
+from shared.contracts import TripRequest, WorkflowState
+from ai.orchestration.mock_workflow import fixture, mock_components
+from ai.orchestration.graph_workflow import LangGraphOrchestrator
+from ai.orchestration.workflow_state import STEPS
 
 
 def setup():

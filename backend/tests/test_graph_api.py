@@ -8,9 +8,9 @@ from app.api.auth import get_current_user_id
 from app.core.config import Settings
 from app.db.session import get_session
 from app.main import create_app
-from app.models.contracts import TripRequest
-from app.services.graph_workflow import GraphRun, LangGraphOrchestrator
-from app.services.mock_workflow import fixture, mock_components
+from shared.contracts import TripRequest
+from ai.orchestration.graph_workflow import GraphRun, LangGraphOrchestrator
+from ai.orchestration.mock_workflow import fixture, mock_components
 from app.services.persistence import WorkflowPersistence
 from app.services.workflow_factory import get_graph_orchestrator
 
@@ -71,7 +71,7 @@ def test_api_graph_dependency_and_persisted_result(monkeypatch):
 
 
 def test_snapshot_repository_validates_identity():
-    from app.core.errors import ApplicationError
+    from shared.errors import ApplicationError
     import pytest
     run = asyncio.run(graph().run(TripRequest.model_validate(fixture("trip_request")), current_date=date(2026, 11, 4)))
     session = MagicMock()

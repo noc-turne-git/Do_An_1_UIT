@@ -1,0 +1,570 @@
+{
+  "$defs": {
+    "DataQuality": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "opening_hours_verified": {
+          "title": "Opening Hours Verified",
+          "type": "boolean"
+        },
+        "last_verified_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Verified At"
+        }
+      },
+      "required": [
+        "source",
+        "opening_hours_verified",
+        "last_verified_at"
+      ],
+      "title": "DataQuality",
+      "type": "object"
+    },
+    "Location": {
+      "additionalProperties": false,
+      "properties": {
+        "latitude": {
+          "maximum": 90,
+          "minimum": -90,
+          "title": "Latitude",
+          "type": "number"
+        },
+        "longitude": {
+          "maximum": 180,
+          "minimum": -180,
+          "title": "Longitude",
+          "type": "number"
+        },
+        "address": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Address"
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude",
+        "address"
+      ],
+      "title": "Location",
+      "type": "object"
+    },
+    "OpeningHours": {
+      "additionalProperties": false,
+      "properties": {
+        "timezone": {
+          "title": "Timezone",
+          "type": "string"
+        },
+        "weekly_schedule": {
+          "items": {
+            "$ref": "#/$defs/WeeklyHours"
+          },
+          "title": "Weekly Schedule",
+          "type": "array"
+        },
+        "special_hours": {
+          "items": {
+            "$ref": "#/$defs/SpecialHours"
+          },
+          "title": "Special Hours",
+          "type": "array"
+        }
+      },
+      "required": [
+        "timezone",
+        "weekly_schedule",
+        "special_hours"
+      ],
+      "title": "OpeningHours",
+      "type": "object"
+    },
+    "Photo": {
+      "additionalProperties": false,
+      "properties": {
+        "photo_reference": {
+          "title": "Photo Reference",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Url"
+        },
+        "width": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "attributions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Attributions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "photo_reference",
+        "url",
+        "width",
+        "height",
+        "attributions"
+      ],
+      "title": "Photo",
+      "type": "object"
+    },
+    "PlaceConstraints": {
+      "additionalProperties": false,
+      "properties": {
+        "reservation_required": {
+          "title": "Reservation Required",
+          "type": "boolean"
+        },
+        "accessibility_notes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Accessibility Notes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "reservation_required",
+        "accessibility_notes"
+      ],
+      "title": "PlaceConstraints",
+      "type": "object"
+    },
+    "PlaceSource": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "user_requested",
+            "agent_suggested"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "original_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Original Name"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "PlaceSource",
+      "type": "object"
+    },
+    "SpecialHours": {
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "format": "date",
+          "title": "Date",
+          "type": "string"
+        },
+        "open": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Open"
+        },
+        "close": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Close"
+        },
+        "is_closed": {
+          "title": "Is Closed",
+          "type": "boolean"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "date",
+        "open",
+        "close",
+        "is_closed"
+      ],
+      "title": "SpecialHours",
+      "type": "object"
+    },
+    "Suitability": {
+      "additionalProperties": false,
+      "properties": {
+        "score_places": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Score Places",
+          "type": "integer"
+        },
+        "matched_interests": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Matched Interests",
+          "type": "array"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "score_places",
+        "matched_interests",
+        "reason"
+      ],
+      "title": "Suitability",
+      "type": "object"
+    },
+    "VisitDuration": {
+      "additionalProperties": false,
+      "properties": {
+        "min_minutes": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Min Minutes",
+          "type": "integer"
+        },
+        "typical_minutes": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Typical Minutes",
+          "type": "integer"
+        },
+        "max_minutes": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Max Minutes",
+          "type": "integer"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Url"
+        },
+        "crawled_at": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Crawled At"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "min_minutes",
+        "typical_minutes",
+        "max_minutes",
+        "source"
+      ],
+      "title": "VisitDuration",
+      "type": "object"
+    },
+    "WeeklyHours": {
+      "additionalProperties": false,
+      "properties": {
+        "weekday": {
+          "maximum": 7,
+          "minimum": 1,
+          "title": "Weekday",
+          "type": "integer"
+        },
+        "open": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Open"
+        },
+        "close": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Close"
+        },
+        "is_closed": {
+          "title": "Is Closed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "weekday",
+        "open",
+        "close",
+        "is_closed"
+      ],
+      "title": "WeeklyHours",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "place_id": {
+      "title": "Place Id",
+      "type": "string"
+    },
+    "google_place_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Google Place Id"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "category": {
+      "title": "Category",
+      "type": "string"
+    },
+    "types": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Types",
+      "type": "array"
+    },
+    "google_maps_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Google Maps Url"
+    },
+    "rating": {
+      "anyOf": [
+        {
+          "maximum": 5,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Rating"
+    },
+    "user_rating_count": {
+      "anyOf": [
+        {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "User Rating Count"
+    },
+    "business_status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Business Status"
+    },
+    "photos": {
+      "items": {
+        "$ref": "#/$defs/Photo"
+      },
+      "title": "Photos",
+      "type": "array"
+    },
+    "location": {
+      "$ref": "#/$defs/Location"
+    },
+    "opening_hours": {
+      "$ref": "#/$defs/OpeningHours"
+    },
+    "visit_duration": {
+      "$ref": "#/$defs/VisitDuration"
+    },
+    "suitability": {
+      "$ref": "#/$defs/Suitability"
+    },
+    "constraints": {
+      "$ref": "#/$defs/PlaceConstraints"
+    },
+    "cluster_id": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cluster Id"
+    },
+    "data_quality": {
+      "$ref": "#/$defs/DataQuality"
+    },
+    "source": {
+      "$ref": "#/$defs/PlaceSource"
+    }
+  },
+  "required": [
+    "place_id",
+    "google_place_id",
+    "name",
+    "category",
+    "types",
+    "google_maps_url",
+    "rating",
+    "user_rating_count",
+    "business_status",
+    "photos",
+    "location",
+    "opening_hours",
+    "visit_duration",
+    "suitability",
+    "constraints",
+    "cluster_id",
+    "data_quality",
+    "source"
+  ],
+  "title": "PlaceCandidate",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

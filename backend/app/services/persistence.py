@@ -3,7 +3,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from app.db.models import (ClarificationRoundRecord, PendingItemRecord, SolverAttemptRecord,
     WorkflowErrorRecord, WorkflowArtifactRecord)
-from app.models.contracts import PlaceCandidates
+from shared.contracts import PlaceCandidates
 from app.repositories.workflows import OwnedRepository, RequestRepository
 from app.repositories.artifacts import ArtifactRepository
 from app.repositories.results import ResultRepository
@@ -21,8 +21,8 @@ class WorkflowPersistence(OwnedRepository):
         self.session.flush()
 
     def load_graph(self, request_id):
-        from app.services.graph_workflow import GraphRun
-        from app.core.errors import ApplicationError
+        from ai.orchestration.graph_workflow import GraphRun
+        from shared.errors import ApplicationError
         row = self.request(request_id)
         if row.graph_snapshot is None:
             raise ApplicationError("not_found", "No graph snapshot; legacy sequential requests cannot resume as graphs")
@@ -93,8 +93,8 @@ class WorkflowPersistence(OwnedRepository):
         self.session.flush()
 
     def load(self, request_id):
-        from app.models.contracts import WorkflowState, ArtifactReferences, AnswerHistory, Attempt, WorkflowError
-        from app.services.workflow_state import WorkflowRun, STEPS, REFS
+        from shared.contracts import WorkflowState, ArtifactReferences, AnswerHistory, Attempt, WorkflowError
+        from ai.orchestration.workflow_state import WorkflowRun, STEPS, REFS
         request = self.request(request_id, lock=True)
         artifacts = list(self.session.scalars(select(WorkflowArtifactRecord).where(
             WorkflowArtifactRecord.request_id == request_id)))

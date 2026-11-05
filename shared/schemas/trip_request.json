@@ -1,0 +1,689 @@
+{
+  "$defs": {
+    "AdditionalConstraint": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "is_hard": {
+          "title": "Is Hard",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "description",
+        "type",
+        "is_hard"
+      ],
+      "title": "AdditionalConstraint",
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Amount"
+        },
+        "currency": {
+          "title": "Currency",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Scope"
+        },
+        "includes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Includes",
+          "type": "array"
+        },
+        "excludes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Excludes",
+          "type": "array"
+        },
+        "flexibility": {
+          "title": "Flexibility",
+          "type": "string"
+        },
+        "max_overrun_percent": {
+          "minimum": 0,
+          "title": "Max Overrun Percent",
+          "type": "number"
+        },
+        "preferences": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preferences"
+        }
+      },
+      "required": [
+        "amount",
+        "currency",
+        "scope",
+        "includes",
+        "excludes",
+        "flexibility",
+        "max_overrun_percent"
+      ],
+      "title": "Budget",
+      "type": "object"
+    },
+    "DailyPreference": {
+      "additionalProperties": false,
+      "properties": {
+        "day": {
+          "minimum": 1,
+          "title": "Day",
+          "type": "integer"
+        },
+        "activity_start": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Activity Start"
+        },
+        "activity_end": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Activity End"
+        },
+        "return_by": {
+          "anyOf": [
+            {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Return By"
+        },
+        "start_location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Start Location"
+        },
+        "end_location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "End Location"
+        },
+        "min_activities": {
+          "anyOf": [
+            {
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Min Activities"
+        },
+        "target_activities": {
+          "anyOf": [
+            {
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Target Activities"
+        },
+        "max_activities": {
+          "anyOf": [
+            {
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Max Activities"
+        },
+        "rest_minutes": {
+          "anyOf": [
+            {
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rest Minutes"
+        },
+        "pace_override": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pace Override"
+        }
+      },
+      "required": [
+        "day",
+        "activity_start",
+        "activity_end",
+        "return_by",
+        "start_location",
+        "end_location",
+        "min_activities",
+        "target_activities",
+        "max_activities",
+        "rest_minutes",
+        "pace_override"
+      ],
+      "title": "DailyPreference",
+      "type": "object"
+    },
+    "Destination": {
+      "additionalProperties": false,
+      "properties": {
+        "selection_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "explicit",
+                "implicit",
+                "ambiguous"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Selection Mode"
+        },
+        "city": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "City"
+        },
+        "province": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Province"
+        },
+        "country": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Country"
+        },
+        "candidate_cities": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Candidate Cities",
+          "type": "array"
+        },
+        "preferred_areas": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Preferred Areas",
+          "type": "array"
+        },
+        "must_visit": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Must Visit",
+          "type": "array"
+        },
+        "avoid_places": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Avoid Places",
+          "type": "array"
+        }
+      },
+      "required": [
+        "selection_mode",
+        "city",
+        "province",
+        "country",
+        "candidate_cities",
+        "preferred_areas",
+        "must_visit",
+        "avoid_places"
+      ],
+      "title": "Destination",
+      "type": "object"
+    },
+    "Preferences": {
+      "additionalProperties": false,
+      "properties": {
+        "interests": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Interests"
+        },
+        "pace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pace"
+        },
+        "transport_modes": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Transport Modes"
+        }
+      },
+      "required": [
+        "interests",
+        "pace",
+        "transport_modes"
+      ],
+      "title": "Preferences",
+      "type": "object"
+    },
+    "RequestMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "raw_prompt": {
+          "title": "Raw Prompt",
+          "type": "string"
+        },
+        "field_sources": {
+          "additionalProperties": {
+            "enum": [
+              "user",
+              "default",
+              "inferred"
+            ],
+            "type": "string"
+          },
+          "title": "Field Sources",
+          "type": "object"
+        },
+        "field_confidences": {
+          "additionalProperties": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "title": "Field Confidences",
+          "type": "object"
+        },
+        "field_decisions": {
+          "additionalProperties": {
+            "enum": [
+              "UNKNOWN",
+              "FLEXIBLE",
+              "AI_DECIDE",
+              "NO_PREFERENCE",
+              "DEFERRED",
+              "SPECIFIED"
+            ],
+            "type": "string"
+          },
+          "title": "Field Decisions",
+          "type": "object"
+        },
+        "parser_status": {
+          "anyOf": [
+            {
+              "enum": [
+                "clarifying",
+                "ready",
+                "error"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parser Status"
+        }
+      },
+      "required": [
+        "raw_prompt",
+        "field_sources",
+        "field_confidences"
+      ],
+      "title": "RequestMeta",
+      "type": "object"
+    },
+    "Travelers": {
+      "additionalProperties": false,
+      "properties": {
+        "adults": {
+          "anyOf": [
+            {
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Adults"
+        },
+        "children": {
+          "anyOf": [
+            {
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Children"
+        },
+        "children_ages": {
+          "items": {
+            "maximum": 2147483647,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Children Ages",
+          "type": "array"
+        }
+      },
+      "required": [
+        "adults",
+        "children",
+        "children_ages"
+      ],
+      "title": "Travelers",
+      "type": "object"
+    },
+    "Trip": {
+      "additionalProperties": false,
+      "properties": {
+        "start_date": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Start Date"
+        },
+        "end_date": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "End Date"
+        },
+        "duration_days": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Duration Days"
+        },
+        "timezone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Timezone"
+        },
+        "arrival": {
+          "$ref": "#/$defs/TripBoundary"
+        },
+        "departure": {
+          "$ref": "#/$defs/TripBoundary"
+        }
+      },
+      "required": [
+        "start_date",
+        "end_date",
+        "duration_days",
+        "timezone",
+        "arrival",
+        "departure"
+      ],
+      "title": "Trip",
+      "type": "object"
+    },
+    "TripBoundary": {
+      "additionalProperties": false,
+      "properties": {
+        "datetime": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Datetime"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Location"
+        }
+      },
+      "required": [
+        "datetime",
+        "location"
+      ],
+      "title": "TripBoundary",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "destination": {
+      "$ref": "#/$defs/Destination"
+    },
+    "trip": {
+      "$ref": "#/$defs/Trip"
+    },
+    "travelers": {
+      "$ref": "#/$defs/Travelers"
+    },
+    "budget": {
+      "$ref": "#/$defs/Budget"
+    },
+    "preferences": {
+      "$ref": "#/$defs/Preferences"
+    },
+    "daily_preferences": {
+      "items": {
+        "$ref": "#/$defs/DailyPreference"
+      },
+      "title": "Daily Preferences",
+      "type": "array"
+    },
+    "must_do": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Must Do",
+      "type": "array"
+    },
+    "additional_constraints": {
+      "items": {
+        "$ref": "#/$defs/AdditionalConstraint"
+      },
+      "title": "Additional Constraints",
+      "type": "array"
+    },
+    "meta": {
+      "$ref": "#/$defs/RequestMeta"
+    },
+    "missing_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing Fields",
+      "type": "array"
+    }
+  },
+  "required": [
+    "destination",
+    "trip",
+    "travelers",
+    "budget",
+    "preferences",
+    "daily_preferences",
+    "must_do",
+    "additional_constraints",
+    "meta",
+    "missing_fields"
+  ],
+  "title": "TripRequest",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

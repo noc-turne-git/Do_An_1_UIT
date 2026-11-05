@@ -1,0 +1,153 @@
+{
+  "$defs": {
+    "CandidateRegion": {
+      "additionalProperties": false,
+      "properties": {
+        "city": {
+          "title": "City",
+          "type": "string"
+        },
+        "province": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Province"
+        },
+        "country": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Country"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "city",
+        "reason"
+      ],
+      "title": "CandidateRegion",
+      "type": "object"
+    },
+    "Region": {
+      "additionalProperties": false,
+      "properties": {
+        "city": {
+          "title": "City",
+          "type": "string"
+        },
+        "province": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Province"
+        },
+        "country": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Country"
+        }
+      },
+      "required": [
+        "city"
+      ],
+      "title": "Region",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_type": {
+      "enum": [
+        "EXPLICIT",
+        "IMPLICIT",
+        "AMBIGUOUS",
+        "INSUFFICIENT"
+      ],
+      "title": "Request Type",
+      "type": "string"
+    },
+    "selected_region": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Region"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "selection_status": {
+      "enum": [
+        "selected",
+        "needs_user_choice",
+        "no_valid_candidate",
+        "needs_more_info"
+      ],
+      "title": "Selection Status",
+      "type": "string"
+    },
+    "selection_reason": {
+      "title": "Selection Reason",
+      "type": "string"
+    },
+    "candidate_regions": {
+      "items": {
+        "$ref": "#/$defs/CandidateRegion"
+      },
+      "title": "Candidate Regions",
+      "type": "array"
+    },
+    "missing_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing Fields",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_type",
+    "selected_region",
+    "selection_status",
+    "selection_reason",
+    "candidate_regions",
+    "missing_fields"
+  ],
+  "title": "DestinationResult",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

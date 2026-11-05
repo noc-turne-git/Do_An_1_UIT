@@ -7,12 +7,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
-from app.core.errors import ApplicationError
+from shared.errors import ApplicationError
 from app.main import create_app
-from app.services.graph_workflow import GraphRun, GraphLimits, DataRequirement
+from ai.orchestration.graph_workflow import GraphRun, GraphLimits, DataRequirement
 from app.services.workflow_factory import get_graph_orchestrator
 from test_graph_workflow import workflow, execute, path, reject_once, offline
-from app.services.mock_workflow import fixture, mock_components
+from ai.orchestration.mock_workflow import fixture, mock_components
 
 
 EVIDENCE = {}
@@ -21,7 +21,7 @@ EVIDENCE = {}
 @pytest.fixture(scope="module", autouse=True)
 def write_evidence():
     yield
-    target = Path(__file__).parents[1] / "langgraph-audit-traces.json"
+    target = Path(__file__).resolve().parents[2] / "ai/logs/langgraph-audit-traces.json"
     target.write_text(json.dumps(EVIDENCE, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -168,7 +168,7 @@ def test_audit_retryable_error_is_terminal():
 def test_audit_dev_api_real_factory(monkeypatch):
     application = create_app(Settings(_env_file=None, database_url=None))
     # Spy on actual factory class, without overriding the FastAPI dependency.
-    from app.services.graph_workflow import LangGraphOrchestrator
+    from ai.orchestration.graph_workflow import LangGraphOrchestrator
     original = LangGraphOrchestrator.run
     captured = []
     async def spy(self, *args, **kwargs):

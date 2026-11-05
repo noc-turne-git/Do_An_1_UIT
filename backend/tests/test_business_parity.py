@@ -11,10 +11,10 @@ from pydantic import TypeAdapter
 from langgraph.errors import NodeCancelledError
 import test_mock_workflow as business_helpers
 import test_full_backend as backend
-from app.models.contracts import TripRequest, WorkflowState
-from app.services.graph_workflow import LangGraphOrchestrator
-from app.services.mock_workflow import fixture, mock_components
-from app.services.workflow_state import OUTPUTS, REFS, STEPS, StateMachine
+from shared.contracts import TripRequest, WorkflowState
+from ai.orchestration.graph_workflow import LangGraphOrchestrator
+from ai.orchestration.mock_workflow import fixture, mock_components
+from ai.orchestration.workflow_state import OUTPUTS, REFS, STEPS, StateMachine
 
 # Contract and boundary assertions run directly in test_mock_workflow and test_full_backend.
 IDENTITY = dict(trip_id=UUID(int=101), request_id=UUID(int=102))
