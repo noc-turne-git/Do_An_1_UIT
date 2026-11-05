@@ -17,6 +17,7 @@ export const tripService = {
     const index = trips.findIndex((trip) => trip.id === id)
     if (index < 0) throw new Error('Trip not found')
     trips[index] = { ...trips[index], ...changes }
+    if (changes.when !== undefined) trips[index].duration = changes.when
     return trips[index]
   },
   async addChat(id: string, firstMessage = '') {
@@ -28,8 +29,8 @@ export const tripService = {
       name: text ? text.slice(0, 36) : 'New chat',
       updated: 'Updated just now',
       messages: text
-        ? [{ from: 'You' as const, text }, { from: 'AI' as const, text: 'Let’s plan something great. I can help you with that.' }]
-        : [{ from: 'AI' as const, text: 'Let’s plan something great. What would you like to explore?' }],
+        ? [{ from: 'You' as const, text }, { from: 'AI' as const, text: 'Letï¿½s plan something great. I can help you with that.' }]
+        : [{ from: 'AI' as const, text: 'Letï¿½s plan something great. What would you like to explore?' }],
     }
     trip.chats.push(chat)
     return trip

@@ -1,0 +1,462 @@
+{
+  "schema_version": "1.0",
+  "trip_id": "10000000-0000-4000-8000-000000000001",
+  "budget": {
+    "amount": 3000000,
+    "currency": "VND",
+    "scope": "whole_trip",
+    "includes": [
+      "admission",
+      "food"
+    ],
+    "excludes": [],
+    "flexibility": "strict",
+    "max_overrun_percent": 0.0,
+    "preferences": null
+  },
+  "candidate_places": [
+    {
+      "place_id": "p001",
+      "types": [
+        "park",
+        "tourist_attraction"
+      ],
+      "score_places": 92,
+      "visit_duration_typical": 90,
+      "estimated_total_cost": {
+        "min": 40000,
+        "max": 60000,
+        "currency": "VND"
+      },
+      "price_status": "ESTIMATED",
+      "price_confidence_score": 0.7,
+      "latitude": 11.950000000000001,
+      "longitude": 108.45,
+      "cluster_id": null,
+      "opening_hours": {
+        "timezone": "Asia/Ho_Chi_Minh",
+        "weekly_schedule": [
+          {
+            "weekday": 6,
+            "open": "07:30",
+            "close": "17:00",
+            "is_closed": false
+          },
+          {
+            "weekday": 7,
+            "open": "07:30",
+            "close": "17:00",
+            "is_closed": false
+          },
+          {
+            "weekday": 1,
+            "open": "07:30",
+            "close": "17:00",
+            "is_closed": false
+          }
+        ],
+        "special_hours": [
+          {
+            "date": "2026-12-25",
+            "open": null,
+            "close": null,
+            "is_closed": true,
+            "note": "Đóng cửa"
+          }
+        ]
+      }
+    },
+    {
+      "place_id": "p002",
+      "types": [
+        "restaurant",
+        "food"
+      ],
+      "score_places": 85,
+      "visit_duration_typical": 60,
+      "estimated_total_cost": {
+        "min": 120000,
+        "max": 200000,
+        "currency": "VND"
+      },
+      "price_status": "ESTIMATED",
+      "price_confidence_score": 0.7,
+      "latitude": 11.940000000000001,
+      "longitude": 108.46,
+      "cluster_id": null,
+      "opening_hours": {
+        "timezone": "Asia/Ho_Chi_Minh",
+        "weekly_schedule": [
+          {
+            "weekday": 6,
+            "open": "07:30",
+            "close": "21:00",
+            "is_closed": false
+          },
+          {
+            "weekday": 7,
+            "open": "07:30",
+            "close": "21:00",
+            "is_closed": false
+          },
+          {
+            "weekday": 1,
+            "open": "07:30",
+            "close": "21:00",
+            "is_closed": false
+          }
+        ],
+        "special_hours": [
+          {
+            "date": "2026-12-25",
+            "open": null,
+            "close": null,
+            "is_closed": true,
+            "note": "Đóng cửa"
+          }
+        ]
+      }
+    },
+    {
+      "place_id": "p003",
+      "types": [
+        "park",
+        "tourist_attraction"
+      ],
+      "score_places": 78,
+      "visit_duration_typical": 90,
+      "estimated_total_cost": {
+        "min": 30000,
+        "max": 50000,
+        "currency": "VND"
+      },
+      "price_status": "ESTIMATED",
+      "price_confidence_score": 0.7,
+      "latitude": 11.930000000000001,
+      "longitude": 108.47,
+      "cluster_id": null,
+      "opening_hours": {
+        "timezone": "Asia/Ho_Chi_Minh",
+        "weekly_schedule": [
+          {
+            "weekday": 6,
+            "open": "07:30",
+            "close": "17:00",
+            "is_closed": false
+          },
+          {
+            "weekday": 7,
+            "open": "07:30",
+            "close": "17:00",
+            "is_closed": false
+          },
+          {
+            "weekday": 1,
+            "open": "07:30",
+            "close": "17:00",
+            "is_closed": false
+          }
+        ],
+        "special_hours": [
+          {
+            "date": "2026-12-25",
+            "open": null,
+            "close": null,
+            "is_closed": true,
+            "note": "Đóng cửa"
+          }
+        ]
+      }
+    }
+  ],
+  "must_visit_place_ids": [],
+  "avoid_place_ids": [],
+  "time_constraints": {
+    "schema_version": "1.0",
+    "days": [
+      {
+        "day": 1,
+        "date": "2026-11-14",
+        "activity_window": {
+          "start": {
+            "value": "09:00",
+            "is_hard": false
+          },
+          "end": {
+            "value": "20:00",
+            "is_hard": false
+          }
+        },
+        "target_activity_count": {
+          "min": {
+            "value": 0,
+            "is_hard": false
+          },
+          "target": {
+            "value": 2,
+            "is_hard": false
+          },
+          "max": {
+            "value": 4,
+            "is_hard": false
+          }
+        },
+        "pace": {
+          "value": "relaxed",
+          "is_hard": false
+        },
+        "transport_mode": {
+          "value": [
+            "motorbike"
+          ],
+          "is_hard": true
+        },
+        "meal_windows": [
+          {
+            "type": "dinner",
+            "start": "17:30",
+            "end": "19:30",
+            "duration_minutes": 60,
+            "required": false
+          }
+        ],
+        "rest_minutes": {
+          "value": 60,
+          "is_hard": false
+        },
+        "preferences": [
+          {
+            "value": "nature",
+            "is_hard": true
+          },
+          {
+            "value": "food",
+            "is_hard": true
+          },
+          {
+            "value": "photography",
+            "is_hard": true
+          }
+        ],
+        "start_location_id": "hotel",
+        "end_location_id": "hotel"
+      },
+      {
+        "day": 2,
+        "date": "2026-11-15",
+        "activity_window": {
+          "start": {
+            "value": "09:00",
+            "is_hard": true
+          },
+          "end": {
+            "value": "12:00",
+            "is_hard": true
+          }
+        },
+        "target_activity_count": {
+          "min": {
+            "value": 1,
+            "is_hard": true
+          },
+          "target": {
+            "value": 1,
+            "is_hard": false
+          },
+          "max": {
+            "value": 2,
+            "is_hard": true
+          }
+        },
+        "pace": {
+          "value": "relaxed",
+          "is_hard": false
+        },
+        "transport_mode": {
+          "value": [
+            "motorbike"
+          ],
+          "is_hard": true
+        },
+        "meal_windows": [],
+        "rest_minutes": {
+          "value": 0,
+          "is_hard": true
+        },
+        "preferences": [
+          {
+            "value": "nature",
+            "is_hard": true
+          },
+          {
+            "value": "food",
+            "is_hard": true
+          },
+          {
+            "value": "photography",
+            "is_hard": true
+          }
+        ],
+        "start_location_id": "hotel",
+        "end_location_id": "hotel"
+      },
+      {
+        "day": 3,
+        "date": "2026-11-16",
+        "activity_window": {
+          "start": {
+            "value": "09:00",
+            "is_hard": false
+          },
+          "end": {
+            "value": "20:00",
+            "is_hard": false
+          }
+        },
+        "target_activity_count": {
+          "min": {
+            "value": 0,
+            "is_hard": false
+          },
+          "target": {
+            "value": 2,
+            "is_hard": false
+          },
+          "max": {
+            "value": 4,
+            "is_hard": false
+          }
+        },
+        "pace": {
+          "value": "relaxed",
+          "is_hard": false
+        },
+        "transport_mode": {
+          "value": [
+            "motorbike"
+          ],
+          "is_hard": true
+        },
+        "meal_windows": [
+          {
+            "type": "dinner",
+            "start": "17:30",
+            "end": "19:30",
+            "duration_minutes": 60,
+            "required": false
+          }
+        ],
+        "rest_minutes": {
+          "value": 60,
+          "is_hard": false
+        },
+        "preferences": [
+          {
+            "value": "nature",
+            "is_hard": true
+          },
+          {
+            "value": "food",
+            "is_hard": true
+          },
+          {
+            "value": "photography",
+            "is_hard": true
+          }
+        ],
+        "start_location_id": "hotel",
+        "end_location_id": "hotel"
+      }
+    ]
+  },
+  "travel_time_matrix": {
+    "locations": [
+      "p001",
+      "p002",
+      "p003",
+      "hotel"
+    ],
+    "mode": "motorbike",
+    "unit": "minutes",
+    "values": [
+      [
+        0,
+        10,
+        10,
+        10
+      ],
+      [
+        10,
+        0,
+        10,
+        10
+      ],
+      [
+        10,
+        10,
+        0,
+        10
+      ],
+      [
+        10,
+        10,
+        10,
+        0
+      ]
+    ]
+  },
+  "travel_distance_matrix": {
+    "locations": [
+      "p001",
+      "p002",
+      "p003",
+      "hotel"
+    ],
+    "mode": "motorbike",
+    "unit": "m",
+    "values": [
+      [
+        0,
+        2000,
+        2000,
+        2000
+      ],
+      [
+        2000,
+        0,
+        2000,
+        2000
+      ],
+      [
+        2000,
+        2000,
+        0,
+        2000
+      ],
+      [
+        2000,
+        2000,
+        2000,
+        0
+      ]
+    ]
+  },
+  "weights": {
+    "alpha": 1.0,
+    "beta": 0.3,
+    "gamma": 0.2,
+    "delta": 0.5,
+    "normalized": true
+  },
+  "optimization": {
+    "objective": "maximize_total_utility",
+    "allow_optional_places_to_be_skipped": true,
+    "cost_basis_hard_limit": "max",
+    "cost_basis_objective": "midpoint"
+  },
+  "solver_config": {
+    "time_limit_seconds": 30,
+    "random_seed": 42,
+    "max_retries": 3
+  }
+}

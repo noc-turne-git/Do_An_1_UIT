@@ -23,26 +23,27 @@ export function TripWhenFields({
   onClose,
   onSave,
 }: Props) {
-  const today = new Date()
+  const [today] = useState(() => new Date())
+  const savedDates = when.match(/\d{4}-\d{2}-\d{2}/g) ?? []
 
   const [tab, setTab] = useState<'dates' | 'flexible'>(
-    'dates',
+    /\d+ days/.test(when) ? 'flexible' : 'dates',
   )
 
   const [month, setMonth] = useState(
     () =>
-      new Date(
+      savedDates.length ? new Date(`${savedDates[0]}T12:00:00`) : new Date(
         today.getFullYear(),
         today.getMonth(),
         1,
       ),
   )
 
-  const [dates, setDates] = useState<string[]>([])
-  const [days, setDays] = useState(5)
+  const [dates, setDates] = useState<string[]>(() => savedDates.slice(0, 2).sort())
+  const [days, setDays] = useState(() => Number(when.match(/^(\d+) days/)?.[1]) || 5)
 
   const [monthOffset, setMonthOffset] = useState(0)
-  const [months, setMonths] = useState<string[]>([])
+  const [months, setMonths] = useState<string[]>(() => /\d+ days, /.test(when) ? when.split(' days, ')[1].split(', ').filter((name) => name !== 'Anytime') : [])
 
   const [showDatePicker, setShowDatePicker] =
     useState(false)
@@ -79,7 +80,7 @@ export function TripWhenFields({
         month: 'long',
       })
     })
-  }, [monthOffset])
+  }, [monthOffset, today])
 
   const years = useMemo(() => {
     const startYear = today.getFullYear() - 5
@@ -89,10 +90,12 @@ export function TripWhenFields({
       { length: endYear - startYear + 1 },
       (_, index) => startYear + index,
     )
-  }, [])
+  }, [today])
 
   const label =
-    dates.length >= 2
+    tab === 'flexible'
+      ? `${days} days, ${months.length ? months.join(', ') : 'Anytime'}`
+      : dates.length >= 2
       ? `${dates[0]} – ${dates.at(-1)}`
       : dates.length === 1
         ? dates[0]
@@ -131,11 +134,9 @@ export function TripWhenFields({
   }, [showDatePicker])
 
   function toggleDate(value: string) {
-    setDates((current) =>
-      current.includes(value)
-        ? current.filter((item) => item !== value)
-        : [...current, value].sort(),
-    )
+    setDates((current) => !current.length || current.length === 2
+      ? [value]
+      : [current[0], value].sort())
   }
 
   function previousMonth() {
@@ -182,9 +183,10 @@ export function TripWhenFields({
     )
   }
 
-  function renderCalendar() {
-    const year = month.getFullYear()
-    const monthIndex = month.getMonth()
+  function renderCalendar(offset: number) {
+    const visibleMonth = new Date(month.getFullYear(), month.getMonth() + offset, 1)
+    const year = visibleMonth.getFullYear()
+    const monthIndex = visibleMonth.getMonth()
 
     const firstDay = new Date(
       year,
@@ -192,7 +194,7 @@ export function TripWhenFields({
       1,
     ).getDay()
 
-    const leadingDays = (firstDay + 6) % 7
+    const leadingDays = firstDay
 
     const daysInMonth = new Date(
       year,
@@ -209,7 +211,7 @@ export function TripWhenFields({
             type="button"
             onClick={previousMonth}
             aria-label="Previous month"
-            className="grid h-9 w-9 place-items-center rounded-full text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-900"
+            className={`${offset === 1 ? 'invisible' : ''} grid h-9 w-9 shrink-0 place-items-center rounded-full text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-900`}
           >
             <ChevronLeft
               size={22}
@@ -218,7 +220,7 @@ export function TripWhenFields({
           </button>
 
           {/* Month + Year */}
-          <div
+          {offset === 1 ? <h3 className="py-2 text-center text-[17px] font-semibold text-neutral-900">{visibleMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3> : <div
             ref={datePickerRef}
             className="relative"
           >
@@ -260,7 +262,7 @@ export function TripWhenFields({
 
             {/* Month / Year picker */}
             {showDatePicker && (
-              <div className="absolute left-1/2 top-[52px] z-50 w-[390px] -translate-x-1/2 rounded-2xl border border-neutral-200 bg-white p-4 shadow-xl">
+              <div className="absolute left-1/2 top-[52px] z-50 w-[min(390px,calc(100vw-64px))] -translate-x-1/2 rounded-2xl border border-neutral-200 bg-white p-4 shadow-xl">
                 {/* Close */}
                 <div className="mb-3 flex justify-end">
                   <button
@@ -351,14 +353,14 @@ export function TripWhenFields({
                 </div>
               </div>
             )}
-          </div>
+          </div>}
 
           {/* Next month */}
           <button
             type="button"
             onClick={nextMonth}
             aria-label="Next month"
-            className="grid h-9 w-9 place-items-center rounded-full text-neutral-900 transition hover:bg-neutral-100"
+            className={`${offset === 0 ? 'invisible' : ''} grid h-9 w-9 shrink-0 place-items-center rounded-full text-neutral-900 transition hover:bg-neutral-100`}
           >
             <ChevronRight
               size={22}
@@ -370,13 +372,13 @@ export function TripWhenFields({
         {/* Weekdays */}
         <div className="grid grid-cols-7 text-center">
           {[
-            'M',
-            'T',
-            'W',
-            'T',
-            'F',
-            'S',
-            'S',
+            'CN',
+            'T2',
+            'T3',
+            'T4',
+            'T5',
+            'T6',
+            'T7',
           ].map((day, index) => (
             <span
               key={`${day}-${index}`}
@@ -408,20 +410,24 @@ export function TripWhenFields({
                 day,
               )
 
-              const selected =
-                dates.includes(value)
+              const selected = dates.includes(value)
+              const inRange = dates.length === 2 && value > dates[0] && value < dates[1]
+              const past = value < formatDate(today.getFullYear(), today.getMonth(), today.getDate())
 
               return (
                 <button
                   type="button"
                   key={value}
+                  disabled={past}
+                  aria-label={new Date(year, monthIndex, day).toLocaleDateString('en-US', { dateStyle: 'full' })}
+                  aria-pressed={selected || inRange}
                   onClick={() =>
                     toggleDate(value)
                   }
-                  className={`mx-auto mb-4 grid h-10 w-10 place-items-center rounded-full text-sm transition ${
+                  className={`mb-2 grid h-10 w-full place-items-center text-sm transition disabled:cursor-not-allowed disabled:opacity-30 ${
                     selected
-                      ? 'bg-black text-white'
-                      : 'text-neutral-900 hover:bg-neutral-100'
+                      ? 'rounded-full bg-black text-white'
+                      : inRange ? 'bg-neutral-200 text-neutral-900 enabled:hover:bg-neutral-300' : 'rounded-full text-neutral-900 enabled:hover:bg-neutral-100'
                   }`}
                 >
                   {day}
@@ -500,8 +506,14 @@ export function TripWhenFields({
       {/* Content */}
       <div className="flex-1">
         {tab === 'dates' ? (
-          <div className="mx-auto w-full max-w-[520px] px-10 pt-2">
-            {renderCalendar()}
+          <div className="mx-auto w-full px-2 pt-5">
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 sm:gap-10">
+              {renderCalendar(0)}
+              {renderCalendar(1)}
+            </div>
+            <p role="status" className="my-4 text-center text-sm text-neutral-500">
+              {dates.length === 2 ? `${dates[0]} – ${dates[1]}` : dates.length === 1 ? `${dates[0]} — Select an end date` : 'Select a start date and an end date'}
+            </p>
           </div>
         ) : (
           <div className="flex h-full flex-col items-center px-7 pt-[62px]">
@@ -646,7 +658,8 @@ export function TripWhenFields({
         <button
           type="button"
           onClick={() => onSave(label)}
-          className={actionClass}
+          disabled={tab === 'dates' && dates.length !== 2}
+          className={`${actionClass} disabled:cursor-not-allowed disabled:opacity-40`}
         >
           Update
         </button>

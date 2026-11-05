@@ -10,6 +10,7 @@ import { initialStops, suggestions } from '../data'
 
 type Props = {
   duration: string
+  showSampleData?: boolean
 }
 
 function addOneHour(time: string) {
@@ -22,8 +23,8 @@ function addOneHour(time: string) {
   ).padStart(2, '0')}`
 }
 
-export function ItineraryBoardRefactored({ duration }: Props) {
-  const [stops, setStops] = useState(initialStops)
+export function ItineraryBoardRefactored({ duration, showSampleData = true }: Props) {
+  const [stops, setStops] = useState(showSampleData ? initialStops : [])
 
   const [showDistances, setShowDistances] = useState(true)
 

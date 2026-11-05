@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "request_type": "EXPLICIT",
+  "selected_region": {
+    "city": "Đà Lạt",
+    "province": "Lâm Đồng",
+    "country": "Việt Nam"
+  },
+  "selection_status": "selected",
+  "selection_reason": "Điểm đến người dùng yêu cầu.",
+  "candidate_regions": [],
+  "missing_fields": []
+}

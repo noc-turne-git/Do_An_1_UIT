@@ -27,7 +27,7 @@ export function TripFieldModals({
   if (!field) return null
 
   return (
-    <Modal open onClose={onClose} className={field === 'Where' ? 'sm:max-w-2xl sm:p-7' : ''}>
+    <Modal open onClose={onClose} className={field === 'When' ? 'sm:max-w-4xl sm:p-7' : field === 'Where' ? 'sm:max-w-2xl sm:p-7' : ''}>
       {field === 'Where' && <TripWhereFields destination={destination} onClose={onClose} onSave={(value) => onSave({ destination: value })} />}
       {field === 'When' && <TripWhenFields when={when} onClose={onClose} onSave={(value) => onSave({ when: value })} />}
       {field === 'Who' && <TripTravelerFields travelerCount={travelerCount} onClose={onClose} onSave={(value) => onSave({ travelers: value })} />}

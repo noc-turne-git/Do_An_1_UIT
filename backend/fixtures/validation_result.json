@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "trip_id": "10000000-0000-4000-8000-000000000001",
+  "is_valid": true,
+  "violations": [],
+  "warnings": [],
+  "checked_rules": [
+    "input_integrity",
+    "price_integrity",
+    "travel_time",
+    "overlap",
+    "opening_hours",
+    "visit_duration",
+    "day_start_window",
+    "day_end_window",
+    "meal_window",
+    "activity_count",
+    "rest_time",
+    "must_visit",
+    "budget",
+    "summary_consistency"
+  ],
+  "recomputed": {
+    "cost_in_scope": {
+      "min": 190000,
+      "max": 310000
+    },
+    "budget_limit": 3000000,
+    "total_travel_minutes": 0,
+    "total_scheduled_places": 3
+  },
+  "suggested_action": "accept"
+}

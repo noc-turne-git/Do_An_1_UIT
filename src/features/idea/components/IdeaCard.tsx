@@ -73,6 +73,7 @@ export function IdeaCard({
       <div className="p-4">
         <h3 className="truncate font-semibold">{idea.name}</h3>
         <p className="mt-1 text-sm text-neutral-500">{idea.type}</p>
+        {idea.price !== undefined && <p className="mt-2 text-sm font-medium">{idea.price.toLocaleString()} {idea.currency ?? 'VND'}</p>}
         <div className="mt-4 flex items-center justify-between border-t border-neutral-100 pt-3 text-xs text-neutral-500">
           <span>◷ {IDEA_DURATIONS[index % IDEA_DURATIONS.length]}</span>
           <span className="font-semibold text-amber-600">★ {IDEA_RATINGS[index % IDEA_RATINGS.length]}</span>

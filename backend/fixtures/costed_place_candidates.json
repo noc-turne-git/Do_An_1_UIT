@@ -1,0 +1,68 @@
+[
+  {
+    "schema_version": "1.0",
+    "place_id": "p001",
+    "google_place_id": null,
+    "name": "Place A",
+    "category": "nature",
+    "types": [
+      "park",
+      "tourist_attraction"
+    ],
+    "address": null,
+    "score_places": 92,
+    "price_status": "ESTIMATED",
+    "price_confidence_score": 0.7,
+    "estimated_total_cost": {
+      "min": 40000,
+      "max": 60000,
+      "currency": "VND"
+    },
+    "admission_price_raw": null,
+    "score_budget": null
+  },
+  {
+    "schema_version": "1.0",
+    "place_id": "p002",
+    "google_place_id": null,
+    "name": "Place B",
+    "category": "food",
+    "types": [
+      "restaurant",
+      "food"
+    ],
+    "address": null,
+    "score_places": 85,
+    "price_status": "ESTIMATED",
+    "price_confidence_score": 0.7,
+    "estimated_total_cost": {
+      "min": 120000,
+      "max": 200000,
+      "currency": "VND"
+    },
+    "admission_price_raw": null,
+    "score_budget": null
+  },
+  {
+    "schema_version": "1.0",
+    "place_id": "p003",
+    "google_place_id": null,
+    "name": "Place C",
+    "category": "nature",
+    "types": [
+      "park",
+      "tourist_attraction"
+    ],
+    "address": null,
+    "score_places": 78,
+    "price_status": "ESTIMATED",
+    "price_confidence_score": 0.7,
+    "estimated_total_cost": {
+      "min": 30000,
+      "max": 50000,
+      "currency": "VND"
+    },
+    "admission_price_raw": null,
+    "score_budget": null
+  }
+]

@@ -1,0 +1,21 @@
+{
+  "activity_start": "09:00",
+  "activity_end": "20:00",
+  "min_activities": 0,
+  "target_activities": 2,
+  "max_activities": 4,
+  "rest_minutes": 60,
+  "pace": null,
+  "transport_modes": null,
+  "interests": null,
+  "meal_windows": [
+    {
+      "type": "dinner",
+      "start": "17:30",
+      "end": "19:30",
+      "duration_minutes": 60,
+      "required": false
+    }
+  ],
+  "allow_preference_defaults": false
+}

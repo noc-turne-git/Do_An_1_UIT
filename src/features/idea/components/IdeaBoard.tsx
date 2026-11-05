@@ -4,8 +4,8 @@ import { INITIAL_IDEAS } from './ideaData'
 import { DetailsModal, IdeaForm, ItineraryModal, Modal } from './IdeaModals'
 import type { Idea, IdeaAction, IdeaBoardProps, IdeaDialog } from './ideaTypes'
 
-export function IdeaBoard({ onAddToItinerary }: IdeaBoardProps) {
-  const [ideas, setIdeas] = useState<Idea[]>(INITIAL_IDEAS)
+export function IdeaBoard({ onAddToItinerary, initialIdeas = INITIAL_IDEAS }: IdeaBoardProps) {
+  const [ideas, setIdeas] = useState<Idea[]>(initialIdeas)
   const [filter, setFilter] = useState('All types')
   const [savedIdeas, setSavedIdeas] = useState<string[]>([])
   const [openMenu, setOpenMenu] = useState<string | null>(null)
@@ -13,6 +13,9 @@ export function IdeaBoard({ onAddToItinerary }: IdeaBoardProps) {
   const [selectedName, setSelectedName] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [type, setType] = useState('Attraction')
+  const [price, setPrice] = useState('')
+  const [currency, setCurrency] = useState('VND')
+  const [image, setImage] = useState('')
   const [day, setDay] = useState('Day 1')
   const [allDay, setAllDay] = useState(false)
 
@@ -29,6 +32,9 @@ export function IdeaBoard({ onAddToItinerary }: IdeaBoardProps) {
     setSelectedName(null)
     setName('')
     setType('Attraction')
+    setPrice('')
+    setCurrency('VND')
+    setImage('')
     setDialog('add')
   }
 
@@ -36,6 +42,9 @@ export function IdeaBoard({ onAddToItinerary }: IdeaBoardProps) {
     setSelectedName(idea.name)
     setName(idea.name)
     setType(idea.type)
+    setPrice(idea.price === undefined ? '' : String(idea.price))
+    setCurrency(idea.currency ?? 'VND')
+    setImage(idea.image)
     setDialog('edit')
   }
 
@@ -56,15 +65,16 @@ export function IdeaBoard({ onAddToItinerary }: IdeaBoardProps) {
     if (!cleanName) return
 
     const cleanType = type.trim() || 'Other'
+    const details = { name: cleanName, type: cleanType, image: image || 'photo-1500530855697-b586d89ba3ee', price: price === '' ? undefined : Number(price), currency }
     if (dialog === 'edit' && selectedName) {
       setIdeas((currentIdeas) => currentIdeas.map((idea) =>
-        idea.name === selectedName ? { ...idea, name: cleanName, type: cleanType } : idea,
+        idea.name === selectedName ? { ...idea, ...details } : idea,
       ))
       if (selectedName !== cleanName) setSelectedName(cleanName)
     } else {
       setIdeas((currentIdeas) => [
         ...currentIdeas,
-        { name: cleanName, type: cleanType, image: 'photo-1500530855697-b586d89ba3ee' },
+        details,
       ])
     }
 
@@ -128,6 +138,8 @@ export function IdeaBoard({ onAddToItinerary }: IdeaBoardProps) {
         </div>
       </header>
 
+      {visibleIdeas.length === 0 && <p className="mb-5 rounded-xl border border-dashed border-neutral-200 p-6 text-center text-sm text-neutral-500">No ideas yet. Add a place or activity for this trip.</p>}
+
       <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
         {visibleIdeas.map((idea, index) => (
           <IdeaCard
@@ -174,6 +186,12 @@ export function IdeaBoard({ onAddToItinerary }: IdeaBoardProps) {
             mode={dialog === 'edit' ? 'edit' : 'add'}
             name={name}
             type={type}
+            price={price}
+            currency={currency}
+            image={image}
+            onPriceChange={setPrice}
+            onCurrencyChange={setCurrency}
+            onImageChange={setImage}
             onNameChange={setName}
             onTypeChange={setType}
             onSave={saveIdea}

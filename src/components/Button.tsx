@@ -7,5 +7,5 @@ export function Button({ variant = 'secondary', className = '', children, ...pro
     secondary: 'border border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50',
     quiet: 'text-neutral-700 hover:bg-neutral-100',
   }
-  return <button className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${variants[variant]} ${className}`} {...props}>{children}</button>
+  return <button className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`} {...props}>{children}</button>
 }

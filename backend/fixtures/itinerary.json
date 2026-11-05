@@ -1,0 +1,108 @@
+{
+  "schema_version": "1.0",
+  "trip_id": "10000000-0000-4000-8000-000000000001",
+  "status": "feasible",
+  "currency": "VND",
+  "days": [
+    {
+      "day": 1,
+      "date": "2026-11-14",
+      "activities": [
+        {
+          "place_id": "p001",
+          "types": [
+            "park",
+            "tourist_attraction"
+          ],
+          "arrival_time": "09:10",
+          "start_time": "09:10",
+          "departure_time": "10:40",
+          "travel_minutes_from_previous": 10,
+          "estimated_total_cost": {
+            "min": 40000,
+            "max": 60000
+          },
+          "price_status": "ESTIMATED"
+        }
+      ],
+      "day_total_cost": {
+        "min": 40000,
+        "max": 60000
+      },
+      "price_status": "ESTIMATED"
+    },
+    {
+      "day": 2,
+      "date": "2026-11-15",
+      "activities": [
+        {
+          "place_id": "p002",
+          "types": [
+            "restaurant",
+            "food"
+          ],
+          "arrival_time": "09:10",
+          "start_time": "09:10",
+          "departure_time": "10:10",
+          "travel_minutes_from_previous": 10,
+          "estimated_total_cost": {
+            "min": 120000,
+            "max": 200000
+          },
+          "price_status": "ESTIMATED"
+        }
+      ],
+      "day_total_cost": {
+        "min": 120000,
+        "max": 200000
+      },
+      "price_status": "ESTIMATED"
+    },
+    {
+      "day": 3,
+      "date": "2026-11-16",
+      "activities": [
+        {
+          "place_id": "p003",
+          "types": [
+            "park",
+            "tourist_attraction"
+          ],
+          "arrival_time": "09:10",
+          "start_time": "09:10",
+          "departure_time": "10:40",
+          "travel_minutes_from_previous": 10,
+          "estimated_total_cost": {
+            "min": 30000,
+            "max": 50000
+          },
+          "price_status": "ESTIMATED"
+        }
+      ],
+      "day_total_cost": {
+        "min": 30000,
+        "max": 50000
+      },
+      "price_status": "ESTIMATED"
+    }
+  ],
+  "summary": {
+    "total_scheduled_places": 3,
+    "total_cost": {
+      "min": 190000,
+      "max": 310000
+    },
+    "total_travel_minutes": 0,
+    "objective_value": null,
+    "summary_message": "Fixture viết tay: 3 địa điểm trong 3 ngày; không chạy solver.",
+    "price_status": "ESTIMATED"
+  },
+  "dropped_places": [],
+  "relaxation_suggestions": [],
+  "diagnostics": {
+    "solver_status": "feasible",
+    "optimality_proven": false,
+    "unsatisfied_constraints": [],
+    "warnings": []
+  }
+}
