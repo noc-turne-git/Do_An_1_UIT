@@ -7,8 +7,10 @@ import { TripPage } from '../pages/TripPage'
 import { SavedPage } from '../pages/SavedPage'
 import { ChatsPage } from '../pages/ChatsPage'
 import { LandingPage } from '../pages/LandingPage'
+import { ResetPasswordPage } from '../pages/ResetPasswordPage'
+import { AuthCallbackPage } from '../pages/AuthCallbackPage'
 
-export const router = createBrowserRouter([{ path: '/', element: <LandingPage /> }, {
+export const router = createBrowserRouter([{ path: '/', element: <LandingPage /> }, { path: '/auth/callback', element: <AuthCallbackPage /> }, { path: '/reset-password', element: <ResetPasswordPage /> }, {
   element: <AppShell />,
   children: [
     { path: '/home', element: <HomePage /> },

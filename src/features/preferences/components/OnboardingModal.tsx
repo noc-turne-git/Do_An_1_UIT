@@ -18,9 +18,10 @@ import type { WrappingUpPreferences } from './WrappingUpStep'
 import './OnboardingModal.css'
 import { useAuthStore } from '../../auth/store/useAuthStore'
 
-export function OnboardingModal({ email, onClose }: { email: string; onClose: () => void }) {
+export function OnboardingModal({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const navigate = useNavigate()
+  const [saving, setSaving] = useState(false)
   const [allSet, setAllSet] = useState(false)
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -89,14 +90,14 @@ export function OnboardingModal({ email, onClose }: { email: string; onClose: ()
   )
 
   return (
-    <dialog ref={dialogRef} className="onboarding-modal" aria-labelledby="onboarding-title" onCancel={onClose}>
-      <button type="button" className="onboarding-close" aria-label="Close onboarding" onClick={onClose}><X size={22} /></button>
+    <dialog ref={dialogRef} className="onboarding-modal" aria-labelledby="onboarding-title" onCancel={(event) => { if (saving) event.preventDefault(); else onClose() }}>
+      <button type="button" className="onboarding-close" aria-label="Close onboarding" disabled={saving} onClick={onClose}><X size={22} /></button>
       <div className={`onboarding-layout ${step === 'personality' ? 'onboarding-personality' : step === 'trip' || step === 'places' || step === 'style' || step === 'accommodation' || step === 'food' || step === 'wrapping' ? 'onboarding-next-trip' : ''}`}>
-        <form className="onboarding-form" onChange={() => setNotice('')} onSubmit={(event) => {
+        <form className="onboarding-form" aria-busy={saving} onChange={() => setNotice('')} onSubmit={async (event) => {
           event.preventDefault()
-          if (!canContinue) return
+          if (!canContinue || saving) return
           try {
-            localStorage.setItem('travel-profile-draft', JSON.stringify({ email, firstName: firstName.trim(), lastName: lastName.trim(), city: city.trim(), personality, places, onboardingComplete: step === 'wrapping', wrappingUp: { ...wrappingUp, other: wrappingUp.activities.includes('Other') ? wrappingUp.other.trim() : '', notes: wrappingUp.notes.trim() }, foodPreferences: { ...foodPreferences, restaurantOther: foodPreferences.restaurants.includes('Other') ? foodPreferences.restaurantOther.trim() : '', dietaryOther: foodPreferences.dietaryRestrictions.includes('Other') ? foodPreferences.dietaryOther.trim() : '' }, accommodation: { ...accommodation, styleOther: accommodation.styles.includes('Other') ? accommodation.styleOther.trim() : '', loyaltyOther: accommodation.loyaltyPrograms.includes('Other') ? accommodation.loyaltyOther.trim() : '' }, travelStyle: { ...travelStyle, other: travelStyle.splurges.includes('Other') ? travelStyle.other.trim() : '' }, nextTrip: nextTrip.hasTrip === true ? nextTrip : { hasTrip: nextTrip.hasTrip } }))
+
             if (step === 'basics') {
               setNotice('')
               setStep('personality')
@@ -126,13 +127,14 @@ export function OnboardingModal({ email, onClose }: { email: string; onClose: ()
               setStep('wrapping')
               dialogRef.current?.scrollTo(0, 0)
             } else {
-              useAuthStore.getState().updateName(firstName.trim(), lastName.trim())
+              setSaving(true)
+              await useAuthStore.getState().savePreferences({ firstName: firstName.trim(), lastName: lastName.trim(), city: city.trim(), personality, places, onboardingComplete: step === 'wrapping', wrappingUp: { ...wrappingUp, other: wrappingUp.activities.includes('Other') ? wrappingUp.other.trim() : '', notes: wrappingUp.notes.trim() }, foodPreferences: { ...foodPreferences, restaurantOther: foodPreferences.restaurants.includes('Other') ? foodPreferences.restaurantOther.trim() : '', dietaryOther: foodPreferences.dietaryRestrictions.includes('Other') ? foodPreferences.dietaryOther.trim() : '' }, accommodation: { ...accommodation, styleOther: accommodation.styles.includes('Other') ? accommodation.styleOther.trim() : '', loyaltyOther: accommodation.loyaltyPrograms.includes('Other') ? accommodation.loyaltyOther.trim() : '' }, travelStyle: { ...travelStyle, other: travelStyle.splurges.includes('Other') ? travelStyle.other.trim() : '' }, nextTrip: nextTrip.hasTrip === true ? nextTrip : { hasTrip: nextTrip.hasTrip } })
               setAllSet(true)
               dialogRef.current?.scrollTo(0, 0)
             }
-          } catch {
-            setNotice('Your details could not be saved. Please try again.')
-          }
+          } catch (error) {
+            setNotice(error instanceof Error ? error.message : 'Your details could not be saved. Please try again.')
+          } finally { setSaving(false) }
         }}>
           {step === 'wrapping' ? <WrappingUpStep value={wrappingUp} onChange={(value) => { setWrappingUp(value); setNotice('') }} /> : step === 'food' ? <FoodPreferencesStep value={foodPreferences} onChange={(value) => { setFoodPreferences(value); setNotice('') }} /> : step === 'accommodation' ? <AccommodationStep value={accommodation} onChange={(value) => { setAccommodation(value); setNotice('') }} /> : step === 'style' ? <TravelStyleStep value={travelStyle} onChange={(value) => { setTravelStyle(value); setNotice('') }} /> : step === 'places' ? <PlacesStep value={places} onChange={(value) => { setPlaces(value); setNotice('') }} /> : step === 'trip' ? <NextTripStep value={nextTrip} onChange={(value) => { setNextTrip(value); setNotice('') }} /> : step === 'personality' ? <PersonalityStep value={personality} onChange={setPersonality} /> : <div className="onboarding-content">
             <div className="onboarding-logo" aria-hidden="true"><Sparkles size={30} fill="currentColor" /></div>
@@ -151,8 +153,8 @@ export function OnboardingModal({ email, onClose }: { email: string; onClose: ()
             <div className="onboarding-progress" aria-label={`Onboarding: ${stepLabel}`}><span style={{ width: step === 'basics' ? '10%' : step === 'personality' ? '20%' : step === 'trip' ? '30%' : step === 'places' ? '40%' : step === 'style' ? '60%' : step === 'accommodation' ? '70%' : step === 'food' ? '80%' : '90%' }} /></div>
             {notice && <p role="status" className="onboarding-notice">{notice}</p>}
             <div className="onboarding-actions">
-              {step !== 'basics' ? <div className="onboarding-step-label"><button type="button" className="onboarding-back" aria-label="Back to previous step" onClick={() => { setStep(step === 'wrapping' ? 'food' : step === 'food' ? 'accommodation' : step === 'accommodation' ? 'style' : step === 'style' ? 'places' : step === 'places' ? 'trip' : step === 'trip' ? 'personality' : 'basics'); setNotice(''); dialogRef.current?.scrollTo(0, 0) }}><ChevronLeft size={22} /></button><span>{stepLabel}</span></div> : <span>The basics</span>}
-              <button type="submit" disabled={!canContinue}>{step === 'wrapping' ? 'Done' : 'Next'}</button>
+              {step !== 'basics' ? <div className="onboarding-step-label"><button type="button" disabled={saving} className="onboarding-back" aria-label="Back to previous step" onClick={() => { setStep(step === 'wrapping' ? 'food' : step === 'food' ? 'accommodation' : step === 'accommodation' ? 'style' : step === 'style' ? 'places' : step === 'places' ? 'trip' : step === 'trip' ? 'personality' : 'basics'); setNotice(''); dialogRef.current?.scrollTo(0, 0) }}><ChevronLeft size={22} /></button><span>{stepLabel}</span></div> : <span>The basics</span>}
+              <button type="submit" disabled={!canContinue || saving}>{saving ? 'Saving...' : step === 'wrapping' ? 'Save' : 'Next'}</button>
             </div>
           </footer>
         </form>

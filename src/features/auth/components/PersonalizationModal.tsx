@@ -1,12 +1,11 @@
+import { useAuthStore } from '../store/useAuthStore'
 import { useEffect, useRef, useState } from 'react'
 import { Pencil, Plus, Trash2, X } from 'lucide-react'
 
 type Profile = Record<string, unknown>
-function readProfile(): Profile {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem('travel-profile-draft') ?? '{}')
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as Profile : {}
-  } catch { return {} }
+function readProfile(): Record<string, unknown> {
+  const { user, preferences } = useAuthStore.getState()
+  return { ...preferences, firstName: user?.firstName ?? '', lastName: user?.lastName ?? '' }
 }
 function text(value: unknown) { return typeof value === 'string' ? value.trim() : '' }
 function object(value: unknown): Profile { return value && typeof value === 'object' && !Array.isArray(value) ? value as Profile : {} }
@@ -16,6 +15,7 @@ export function PersonalizationModal({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [profile, setProfile] = useState(readProfile)
   const [notice, setNotice] = useState('')
+  const [saving, setSaving] = useState(false)
   const [editing, setEditing] = useState<{ group: string; index: number } | null>(null)
   const [draft, setDraft] = useState('')
   const travel = object(profile.travelStyle)
@@ -25,7 +25,6 @@ export function PersonalizationModal({ onClose }: { onClose: () => void }) {
   const memory = profile.longTermMemory !== false
   const personality = ['neutral', 'casual', 'professional'].includes(text(profile.personality)) ? text(profile.personality) : 'neutral'
   const groups = [
-    { title: 'Identity', icon: '🏡', rows: [text(profile.city) && `Home base: ${text(profile.city)}`, text(profile.firstName) && `Name: ${text(profile.firstName)}`] },
     { title: 'Travel party', icon: '👥', rows: list(travel.companions).map((item) => `Travel party: ${item === 'Solo' ? 'Usually travels solo.' : item === 'Couple' ? 'Usually travels with partner.' : item === 'Family' ? 'Usually travels as a family.' : `Usually travels with ${item.toLowerCase()}.`}`) },
     { title: 'Accommodation', icon: '🧳', rows: [list(accommodation.styles).length && `Type: ${list(accommodation.styles).join('; ')}`, text(accommodation.styleOther), list(accommodation.loyaltyPrograms).length && `Loyalty programs: ${list(accommodation.loyaltyPrograms).join('; ')}`, text(accommodation.loyaltyOther)] },
     { title: 'Budget', icon: '💜', rows: [text(travel.budget) && `Budget philosophy: ${text(travel.budget)}${list(travel.splurges).length ? ` · Sometimes splurges on: ${list(travel.splurges).join(', ')}` : ''}`, text(travel.other)] },
@@ -41,19 +40,28 @@ export function PersonalizationModal({ onClose }: { onClose: () => void }) {
     return () => { dialog?.close(); document.body.style.overflow = previousOverflow }
   }, [])
 
-  function save(changes: Profile) {
+  useEffect(() => {
+    if (notice !== 'Personalization updated successfully.') return
+    const timer = window.setTimeout(() => setNotice(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
+  async function save(changes: Profile) {
+    if (saving) return false
+    setNotice('')
+    setSaving(true)
     try {
-      const next = { ...readProfile(), ...changes }
-      localStorage.setItem('travel-profile-draft', JSON.stringify(next))
-      setProfile(next)
-      setNotice('Changes saved.')
+      await useAuthStore.getState().savePreferences(changes)
+      setProfile(readProfile())
+      setNotice('Personalization updated successfully.')
       return true
     } catch { setNotice('Your settings could not be saved. Please try again.'); return false }
+    finally { setSaving(false) }
   }
 
-  function saveEntries(group: string, entries: string[]) {
+  async function saveEntries(group: string, entries: string[]) {
     const savedMemories = object(readProfile().personalizationMemories)
-    if (save({ personalizationMemories: { ...savedMemories, [group]: entries } })) {
+    if (await save({ personalizationMemories: { ...savedMemories, [group]: entries } })) {
       setEditing(null)
       setDraft('')
     }
@@ -68,8 +76,12 @@ export function PersonalizationModal({ onClose }: { onClose: () => void }) {
   return <dialog ref={dialogRef} aria-labelledby="personalization-title" onCancel={onClose} className="fixed inset-0 m-auto max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-[590px] overflow-y-auto rounded-[22px] border border-[#282828] bg-[#111] p-6 text-neutral-200 shadow-2xl backdrop:bg-black/70 backdrop:backdrop-blur-sm sm:p-8">
     <button type="button" aria-label="Close personalization" onClick={onClose} className="absolute right-4 top-4 grid h-8 w-8 cursor-pointer place-items-center rounded-full hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-white"><X size={20} /></button>
     <h1 id="personalization-title" className="mb-7 text-base font-semibold">Personalization</h1>
-    <section className="border-b border-neutral-800 py-6"><label htmlFor="communication-style" className="text-sm font-semibold">Communication style</label><p className="mb-3 mt-1 text-xs text-neutral-400">Choose how you would like Travelio to communicate with you</p><select id="communication-style" value={personality} onChange={(event) => save({ personality: event.target.value })} className="h-9 w-52 max-w-full rounded-full border border-neutral-700 bg-[#111] px-3 text-xs outline-none focus:border-white cursor-pointer"><option value="neutral">Neutral</option><option value="casual">Casual</option><option value="professional">Professional</option></select></section>
-    <section className="pt-6"><div className="flex items-start justify-between gap-5"><div><h2 id="memory-label" className="text-sm font-semibold">Long-term memory</h2><p id="memory-description" className="mt-1 max-w-[390px] text-xs leading-relaxed text-neutral-400">Let Travelio remember your preferences and past trips to personalize future conversations. When off, Travelio won’t use or save anything it learns about you.</p></div><button type="button" role="switch" aria-checked={memory} aria-labelledby="memory-label" aria-describedby="memory-description" onClick={() => save({ longTermMemory: !memory })} className={`mt-1 flex h-5 w-10 shrink-0 cursor-pointer items-center rounded-full p-0.5 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white ${memory ? 'justify-end bg-white' : 'justify-start bg-neutral-600'}`}><span className="h-4 w-4 rounded-full bg-[#111]" /></button></div>
+    {notice && <div role={notice === 'Personalization updated successfully.' ? 'status' : 'alert'} className={`sticky top-0 z-10 mb-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm shadow-lg ${notice === 'Personalization updated successfully.' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-red-200 bg-red-50 text-red-900'}`}>
+      {notice}
+      <button type="button" aria-label="Dismiss notification" onClick={() => setNotice('')} className="cursor-pointer rounded px-2 py-1 hover:bg-black/5">×</button>
+    </div>}
+    <section className="border-b border-neutral-800 py-6"><label htmlFor="communication-style" className="text-sm font-semibold">Communication style</label><p className="mb-3 mt-1 text-xs text-neutral-400">Choose how you would like Travelio to communicate with you</p><select disabled={saving} id="communication-style" value={personality} onChange={(event) => save({ personality: event.target.value })} className="h-9 w-52 max-w-full rounded-full border border-neutral-700 bg-[#111] px-3 text-xs outline-none focus:border-white cursor-pointer"><option value="neutral">Neutral</option><option value="casual">Casual</option><option value="professional">Professional</option></select></section>
+    <section className="pt-6"><div className="flex items-start justify-between gap-5"><div><h2 id="memory-label" className="text-sm font-semibold">Long-term memory</h2><p id="memory-description" className="mt-1 max-w-[390px] text-xs leading-relaxed text-neutral-400">Let Travelio remember your preferences and past trips to personalize future conversations. When off, Travelio won’t use or save anything it learns about you.</p></div><button type="button" disabled={saving} role="switch" aria-checked={memory} aria-labelledby="memory-label" aria-describedby="memory-description" onClick={() => save({ longTermMemory: !memory })} className={`mt-1 flex h-5 w-10 shrink-0 cursor-pointer items-center rounded-full p-0.5 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white ${memory ? 'justify-end bg-white' : 'justify-start bg-neutral-600'}`}><span className="h-4 w-4 rounded-full bg-[#111]" /></button></div>
       <div className="mt-6 space-y-5">{groups.map(({ title, icon, rows }) => {
         const savedRows = object(profile.personalizationMemories)[title]
         const entries = Array.isArray(savedRows) ? list(savedRows) : rows.filter((row): row is string => typeof row === 'string' && Boolean(row))
@@ -84,7 +96,7 @@ export function PersonalizationModal({ onClose }: { onClose: () => void }) {
           <label htmlFor="memory-edit" className="mb-2 block text-xs">{index === -1 ? 'Tell Travelio what you would like it to remember:' : 'Tell Travelio how to update this memory:'}</label>
           <textarea id="memory-edit" autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={'e.g. “Actually I live in Dallas now”'} maxLength={2000} className="block min-h-28 w-full resize-y rounded-[20px] border border-neutral-300 bg-[#111] px-4 py-3 text-sm text-neutral-200 outline-none placeholder:text-neutral-500 focus:ring-2 focus:ring-white/20" />
           <div className="mt-3 flex items-center gap-4">
-            <button type="submit" disabled={!draft.trim()} className="h-9 rounded-full bg-white px-6 text-sm text-black enabled:cursor-pointer enabled:hover:bg-neutral-200 disabled:cursor-not-allowed disabled:bg-[#595959] focus-visible:outline-2 focus-visible:outline-white">Save</button>
+            <button type="submit" disabled={saving || !draft.trim()} className="h-9 rounded-full bg-white px-6 text-sm text-black enabled:cursor-pointer enabled:hover:bg-neutral-200 disabled:cursor-not-allowed disabled:bg-[#595959] focus-visible:outline-2 focus-visible:outline-white">Save</button>
             <button type="button" onClick={() => { setEditing(null); setDraft('') }} className="cursor-pointer rounded px-2 py-2 text-sm font-semibold hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-white">Cancel</button>
             {index !== -1 && <button type="button" aria-label={`Delete memory: ${entries[index]}`} onClick={() => saveEntries(title, entries.filter((_, rowIndex) => rowIndex !== index))} className="ml-auto grid h-9 w-9 cursor-pointer place-items-center rounded-full hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-white"><Trash2 size={16} /></button>}
           </div>
@@ -99,6 +111,5 @@ export function PersonalizationModal({ onClose }: { onClose: () => void }) {
         </section>
       })}</div>
     </section>
-    {notice && <p role="status" className="mt-5 text-xs text-neutral-400">{notice}</p>}
   </dialog>
 }

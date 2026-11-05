@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Eye, EyeOff, X } from 'lucide-react'
-import { OnboardingModal } from '../../preferences/components/OnboardingModal'
+import { Eye, EyeOff, MailCheck, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/useAuthStore'
 
 type RegisterModalProps = {
@@ -14,6 +14,7 @@ export function RegisterModal({
   onClose,
   onBackToLogin,
 }: RegisterModalProps) {
+  const navigate = useNavigate()
   const [email, setEmail] = useState(initialEmail)
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -21,9 +22,10 @@ export function RegisterModal({
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
+  const [busy, setBusy] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [notice, setNotice] = useState('')
-  const [onboardingOpen, setOnboardingOpen] = useState(false)
+  const [confirmationEmail, setConfirmationEmail] = useState('')
 
   const dialogRef = useRef<HTMLDialogElement>(null)
   const confirmPasswordRef = useRef<HTMLInputElement>(null)
@@ -42,7 +44,6 @@ export function RegisterModal({
     'cursor-pointer font-semibold underline underline-offset-2 hover:font-bold'
 
   useEffect(() => {
-    if (onboardingOpen) return
 
     const dialog = dialogRef.current
     const previousOverflow = document.body.style.overflow
@@ -54,17 +55,24 @@ export function RegisterModal({
       dialog?.close()
       document.body.style.overflow = previousOverflow
     }
-  }, [onboardingOpen])
+  }, [])
 
-  function unavailable(provider: string) {
-    setNotice(
-      `${provider} sign-in is not available yet. Please try again later.`
-    )
+  async function handleGoogleLogin() {
+    if (busy) return
+    setBusy(true)
+    setNotice('')
+    try {
+      await useAuthStore.getState().loginWithGoogle()
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not sign in with Google. Please try again.')
+      setBusy(false)
+    }
   }
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
+    if (busy) return
     setSubmitted(true)
     setNotice('')
 
@@ -74,24 +82,23 @@ export function RegisterModal({
     }
 
     try {
-      useAuthStore.getState().register(email, password)
+      setBusy(true)
+      const signedIn = await useAuthStore.getState().register(email, password)
+      if (!signedIn) {
+        setConfirmationEmail(email.trim())
+        setPassword(''); setConfirmPassword('')
+        return
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not register. Please try again.')
       return
-    }
+    } finally { setBusy(false) }
     setPassword('')
     setConfirmPassword('')
-    setOnboardingOpen(true)
+    onClose()
+    navigate('/home')
   }
 
-  if (onboardingOpen) {
-    return (
-      <OnboardingModal
-        email={email.trim()}
-        onClose={onClose}
-      />
-    )
-  }
 
   return (
     <dialog
@@ -146,7 +153,17 @@ export function RegisterModal({
         <X className="h-5 w-5" />
       </button>
 
-      <div className="px-5 py-5 sm:px-8 sm:py-6 [@media(max-height:600px)]:py-3">
+      {confirmationEmail ? <section className="px-8 py-10 text-center" aria-labelledby="register-title">
+        <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-full bg-emerald-50 text-emerald-600"><MailCheck size={32} aria-hidden="true" /></div>
+        <h1 id="register-title" className="mb-3 text-3xl font-semibold">Check your email</h1>
+        <div role="status" className="text-sm leading-6 text-neutral-600">
+          <p>Your registration was submitted successfully.</p>
+          <p>Open the confirmation link sent to <strong className="break-all text-neutral-900">{confirmationEmail}</strong> to activate your account.</p>
+        </div>
+        <p className="mt-4 text-xs leading-5 text-neutral-500">If you do not see the email, check your spam folder. After confirming, log in to set up your travel preferences.</p>
+        <button type="button" onClick={onBackToLogin} className="mt-6 w-full cursor-pointer rounded-full bg-black py-3 font-semibold text-white hover:bg-neutral-800">Back to log in</button>
+        <button type="button" onClick={() => { setConfirmationEmail(''); setNotice('') }} className="mt-4 cursor-pointer text-sm font-semibold underline underline-offset-4">Use a different email</button>
+      </section> : <div className="px-5 py-5 sm:px-8 sm:py-6 [@media(max-height:600px)]:py-3">
         <h1
           id="register-title"
           className="
@@ -360,6 +377,7 @@ export function RegisterModal({
 
           <button
             type="submit"
+            disabled={busy}
             className="
               mt-3 mb-3
               h-11 w-full
@@ -378,7 +396,7 @@ export function RegisterModal({
               focus-visible:outline-black
             "
           >
-            Continue
+            {busy ? 'Creating account...' : 'Continue'}
           </button>
         </form>
 
@@ -408,10 +426,11 @@ export function RegisterModal({
           <span className="h-px flex-1 bg-neutral-800" />
         </div>
 
-        <div className="mb-3 grid grid-cols-2 gap-2">
+        <div className="mb-3 grid grid-cols-1 gap-2">
           <button
             type="button"
-            onClick={() => unavailable('Google')}
+            disabled={busy}
+            onClick={handleGoogleLogin}
             className={socialButtonClass}
           >
             <svg
@@ -440,22 +459,6 @@ export function RegisterModal({
             <span>Google</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => unavailable('Apple')}
-            className={socialButtonClass}
-          >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className="h-6 w-6 shrink-0"
-            >
-              <path d="M17.05 12.54c.03 3.25 2.85 4.33 2.88 4.34-.02.08-.45 1.54-1.49 3.05-.9 1.3-1.83 2.6-3.3 2.63-1.45.03-1.92-.85-3.58-.85-1.65 0-2.17.82-3.54.88-1.42.05-2.5-1.41-3.4-2.71-1.85-2.67-3.27-7.56-1.37-10.86a5.27 5.27 0 0 1 4.45-2.7c1.39-.03 2.7.94 3.55.94.85 0 2.44-1.16 4.11-.99.7.03 2.67.28 3.94 2.14-.1.06-2.35 1.37-2.25 4.13ZM14.33 4.5c.75-.91 1.25-2.18 1.11-3.45-1.08.04-2.4.72-3.18 1.63-.7.8-1.31 2.08-1.15 3.3 1.2.1 2.43-.61 3.22-1.48Z" />
-            </svg>
-
-            <span>Apple</span>
-          </button>
         </div>
 
         {notice && (
@@ -478,7 +481,7 @@ export function RegisterModal({
           </span>
           .
         </p>
-      </div>
+      </div>}
     </dialog>
   )
 }

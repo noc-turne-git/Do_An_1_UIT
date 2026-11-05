@@ -29,6 +29,8 @@ issue_severity_enum = ENUM('hard','soft','info', name="issue_severity", schema="
 class ProfileRecord(Base):
     __tablename__ = "profiles"
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey(_auth_users.c.id, ondelete="CASCADE"), primary_key=True, nullable=False)
+    first_name: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    last_name: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     full_name: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     preferences: Mapped[dict | list] = mapped_column(JSONB(none_as_null=True), nullable=False, server_default=sa.text("'{}'"))

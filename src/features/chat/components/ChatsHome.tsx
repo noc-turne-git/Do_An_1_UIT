@@ -11,7 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 
-import { Modal } from '../../../components/Modal'
+import { useAuthStore } from '../../auth/store/useAuthStore'
 import { chatService } from '../services/chatService'
 import { useTrips } from '../../trip'
 import { useCreateTrip } from '../../trip/hooks/useTrips'
@@ -35,6 +35,7 @@ type Suggestion = {
 type TripField = 'Where' | 'When' | 'Who' | 'Budget'
 
 export function ChatsHome() {
+  const firstName = useAuthStore((state) => state.user?.firstName.trim() || state.user?.lastName.trim() || '')
   const [prompt, setPrompt] = useState('')
   const [createTripOpen, setCreateTripOpen] = useState(false)
   const [tripField, setTripField] = useState<TripField | null>(null)
@@ -146,10 +147,10 @@ export function ChatsHome() {
             </div>
 
             <h1 className="mb-[17px] text-[clamp(28px,2.6vw,36px)] font-semibold tracking-[-1px] text-[#111]">
-              Where to today, Linh?
+              Where to today{firstName ? `, ${firstName}` : ''}?
             </h1>
 
-            <p className="m-0 text-[clamp(16px,1.6vw,22px)] leading-[1.45] text-[#222]">
+            <p className="m-0 text-[15px]  leading-[1.45] text-[#222]">
               Hey there, I’m here to assist you in planning your experience.
               <br />
               Ask me anything travel related.
@@ -157,7 +158,7 @@ export function ChatsHome() {
 
             <button
               type="button"
-              className="mt-[23px] inline-flex items-center gap-[9px] rounded-full border-0 bg-[#f1f1f1] px-4 py-[11px] text-[15px] text-[#222]"
+              className="mt-[23px] mb-[23px] inline-flex items-center gap-[9px] rounded-full border-0 bg-[#f1f1f1] px-4 py-[11px] text-[15px] text-[#222]"
             >
               <AudioWaveform size={16} />
               Update my assistant

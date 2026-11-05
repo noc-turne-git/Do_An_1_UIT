@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { ArrowDown, ArrowUpRight, Bell, Compass, Heart, Sparkles } from 'lucide-react'
 import { LoginModal } from '../features/auth/components/LoginModal'
 import './LandingPage.css'
@@ -11,7 +11,8 @@ const features = [
 ]
 
 export function LandingPage() {
-  const [loginOpen, setLoginOpen] = useState(false)
+  const location = useLocation()
+  const [loginOpen, setLoginOpen] = useState(location.state?.loginOpen === true)
   const loginRef = useRef<HTMLButtonElement>(null)
   return <div className="landing-page">
     <header className="landing-header">
@@ -40,6 +41,6 @@ export function LandingPage() {
       <section className="landing-final-cta"><Sparkles size={38} fill="currentColor" /><h2>Every trip, more you.</h2><p>Your next chapter is out there. Let’s go find it.</p><Link to="/home" className="landing-button">Let’s start <ArrowUpRight size={19} /></Link></section>
     </main>
     <footer className="landing-footer"><Link to="/" className="landing-brand"><Sparkles size={22} fill="currentColor" />Travelio</Link><span>© 2026 Travelio · A world of possibilities.</span><Link to="/home">Start exploring <ArrowUpRight size={16} /></Link></footer>
-    {loginOpen && <LoginModal onClose={() => { setLoginOpen(false); loginRef.current?.focus() }} />}
+    {loginOpen && <LoginModal passwordUpdated={location.state?.passwordUpdated === true} onClose={() => { setLoginOpen(false); loginRef.current?.focus() }} />}
   </div>
 }

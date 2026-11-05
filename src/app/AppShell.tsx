@@ -1,3 +1,4 @@
+import { OnboardingModal } from '../features/preferences/components/OnboardingModal'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   BellRing,
@@ -8,7 +9,7 @@ import {
   UserRound,
 } from 'lucide-react'
 import { AccountPanel } from '../components/AccountPanel'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { LoginModal } from '../features/auth/components/LoginModal'
 import { AssistantSetupModal } from '../features/auth/components/AssistantSetupModal'
 import { AccountSettingsModal } from '../features/auth/components/AccountSettingsModal'
@@ -22,16 +23,38 @@ const nav = [
   { to: '/saved', label: 'Saved places', icon: Heart },
 ]
 
+function OnboardingPrompt() {
+  const [initiallyComplete] = useState(() => useAuthStore.getState().preferences.onboardingComplete === true)
+  const [dismissed, setDismissed] = useState(false)
+  return initiallyComplete || dismissed ? null : <OnboardingModal onClose={() => setDismissed(true)} />
+}
+
+function ProfileSavedNotice({ onDismiss }: { onDismiss: () => void }) {
+  useEffect(() => {
+    const timer = window.setTimeout(onDismiss, 4000)
+    return () => window.clearTimeout(timer)
+  }, [onDismiss])
+  return <div role="status" className="fixed bottom-6 left-1/2 z-50 flex w-max max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-4 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-medium text-emerald-900 shadow-lg">
+    Profile updated successfully.
+    <button type="button" aria-label="Dismiss notification" onClick={onDismiss} className="cursor-pointer rounded px-2 py-1 hover:bg-emerald-100">×</button>
+  </div>
+}
+
 export function AppShell() {
+  const ready = useAuthStore((state) => state.ready)
+  const profileError = useAuthStore((state) => state.profileError)
+  const recovery = useAuthStore((state) => state.recovery)
   const [loginOpen, setLoginOpen] = useState(false)
   const [assistantSetupOpen, setAssistantSetupOpen] = useState(false)
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false)
+  const [profileSaved, setProfileSaved] = useState(false)
   const [personalizationOpen, setPersonalizationOpen] = useState(false)
   const { panel, togglePanel, closePanel } = useShellStore()
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const isChatPage = /^\/chats?(\/|$)/.test(pathname)
   const user = useAuthStore((state) => state.user)
+  const profilePhoto = useAuthStore((state) => state.user ? (typeof state.preferences.profilePhoto === 'string' && state.preferences.profilePhoto.trim()) || state.user.avatarUrl || '' : '')
 
   return (
     <div className="flex min-h-screen bg-white text-neutral-900">
@@ -119,10 +142,14 @@ export function AppShell() {
           onClick={() => togglePanel('account')}
           className={`mt-auto cursor-pointer grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#500d30] text-pink-200 transition-colors hover:bg-[#701343] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-pink-700 ${panel === 'account' ? 'ring-2 ring-pink-300 ring-offset-2' : ''}`}
         >
-          <UserRound className="h-5 w-5" strokeWidth={1.8} />
+          {profilePhoto ? <img src={profilePhoto} alt="" className="h-full w-full rounded-full object-cover" /> : <UserRound className="h-5 w-5" strokeWidth={1.8} />}
         </button>
       </aside>
 
+      {profileError && <p role="alert" className="fixed left-16 top-2 z-50 rounded bg-red-50 p-3 text-red-800">{profileError}</p>}
+      {ready && user && !profileError && !recovery && (
+        <OnboardingPrompt key={user.id} />
+      )}
       <main className="min-w-0 flex-1">
         <Outlet />
       </main>
@@ -140,22 +167,23 @@ export function AppShell() {
         setLoginOpen(true)
       }} onSetupAssistant={() => {
         closePanel()
-        if (user) setAssistantSetupOpen(true)
+        if (user && ready && !profileError) setAssistantSetupOpen(true)
         else setLoginOpen(true)
       }} onAccountSettings={() => {
         closePanel()
-        if (user) setAccountSettingsOpen(true)
+        if (user && ready && !profileError) setAccountSettingsOpen(true)
         else setLoginOpen(true)
       }} onPersonalization={() => {
         closePanel()
-        if (user) setPersonalizationOpen(true)
+        if (user && ready && !profileError) setPersonalizationOpen(true)
         else setLoginOpen(true)
       }} />}
       {user && personalizationOpen && <PersonalizationModal onClose={() => {
         setPersonalizationOpen(false)
         document.querySelector<HTMLButtonElement>('button[aria-label="Account"]')?.focus()
       }} />}
-      {user && accountSettingsOpen && <AccountSettingsModal onClose={() => {
+      {user && profileSaved && <ProfileSavedNotice onDismiss={() => setProfileSaved(false)} />}
+      {user && accountSettingsOpen && <AccountSettingsModal onSaved={() => setProfileSaved(true)} onClose={() => {
         setAccountSettingsOpen(false)
         document.querySelector<HTMLButtonElement>('button[aria-label="Account"]')?.focus()
       }} />}

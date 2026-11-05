@@ -35,7 +35,7 @@ $$;
 -- User preferences; field provenance is recorded in trip_request payloads.
 CREATE TABLE public.profiles (
  id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
- full_name text, avatar_url text,
+ first_name text, last_name text, full_name text, avatar_url text,
  preferences jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(preferences) = 'object'),
  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -44,8 +44,9 @@ FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
 CREATE FUNCTION public.handle_new_user() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = '' AS $$
 BEGIN
- INSERT INTO public.profiles(id, full_name, avatar_url)
- VALUES (NEW.id, NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'avatar_url');
+ INSERT INTO public.profiles(id, first_name, last_name, full_name, avatar_url)
+ VALUES (NEW.id, NEW.raw_user_meta_data->>'first_name', NEW.raw_user_meta_data->>'last_name',
+ NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'avatar_url');
  RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION public.handle_new_user() FROM PUBLIC;
