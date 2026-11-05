@@ -39,7 +39,7 @@ Linux/macOS dùng `source .venv/bin/activate`. Có thể dùng lại `backend/.v
 
 ## Environment
 
-Không ghi đè file environment đang có. Với cài đặt mới, sao chép phần frontend từ `.env.example` vào root `.env.local`, và dùng `backend/.env.example` để tạo `backend/.env` nếu chưa tồn tại.
+Không ghi đè file environment đang có. Với cài đặt mới, sao chép file `.env.example` ở root thành `.env.local` tại root để cấu hình frontend; sao chép `backend/.env.example` thành `backend/.env` để cấu hình backend. Mỗi phần có một file mẫu riêng; frontend không cần các biến database hoặc LLM của backend.
 
 - Frontend đọc root `.env.local` qua `envDir` trong `frontend/vite.config.ts`: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_API_BASE_URL`.
 - Backend đọc `backend/.env` theo đường dẫn tuyệt đối, không phụ thuộc working directory: `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, CORS và các cấu hình AI.
