@@ -70,6 +70,11 @@ No free-text message is interpreted as a routing instruction.
 
 ## State, invalidation and limits
 
+> **Clarification policy (planned, supersedes older prose in this document).**
+> The detailed target policy is [CLARIFICATION_POLICY.md](CLARIFICATION_POLICY.md).
+> Fields/counters marked **planned** below are not all present in the current
+> runtime contract yet; this document does not claim they have been implemented.
+
 `GraphState` contains the structured user input, date, answer, previous parsed
 request and `GraphRun`. `GraphRun` extends the existing Pydantic `WorkflowRun`
 with current validated outputs, per-node visit counts, node-update history,
@@ -86,8 +91,20 @@ History records invalidated nodes and artifact references before/after updates.
 
 Limits persist across explicit resumes:
 
-- Clarification uses the existing `StateMachine` and `max_clarification_rounds`.
-  Only explicitly configured clarification defaults apply after exhaustion.
+- There are two independent clarification counters (**planned**):
+  `clarification_round` / `max_clarification_rounds=3` cover missing
+  `TripRequest` fields and Destination Agent `needs_more_info`.
+  `destination_round` / `max_destination_rounds=2` cover
+  `needs_user_choice` and `no_valid_candidate`. A counter increases only when
+  CODE has a valid non-empty question set and actually sends it to the user.
+- The deterministic branch order is: if `pending_fields` is empty, invoke
+  Destination Agent; if it is non-empty, ask the user while its applicable
+  counter remains below its limit, otherwise apply the applicable default/fail
+  policy. It is never the reverse.
+- After TripRequest clarification exhaustion, only configured defaults apply.
+  `trip.start_date`, `trip.end_date`, `travelers.adults`, and
+  `destination.city` when explicit never default; unresolved ones fail. See
+  the policy document for children, preferences and budget.
 - Revision counts every invocation of a previously visited component, including
   downstream rebuilds. No such invocation occurs past `max_revisions`.
 - Retry counts every Engine invocation after the first. Both `max_retries` and
@@ -115,15 +132,18 @@ constraints are never automatically changed.
 - Cross-agent requests support upstream data refresh. Arbitrary forward
   dependencies, parallel execution and automatic dependency discovery are not
   supported by the existing component protocols.
-- User edits conservatively rerun Parser and all downstream components;
-  field-by-field reuse is not implemented. Failed runs are terminal; start a
-  new run to obtain fresh limits.
+- A user change after `completed` resumes the same request under the 9.4
+  policy (**planned**): reset `retry_count`, `clarification_round`, and
+  `destination_round` to zero, invalidate affected downstream outputs, and
+  write fresh artifact IDs while retaining immutable historical artifacts.
+  Failed runs remain terminal unless a later policy explicitly permits resume.
 - Python resume accepts a `GraphRun`, including a JSON-deserialized snapshot.
   `WorkflowPersistence.save_graph/load_graph` stores/restores the application snapshot
   in `workflow_requests.graph_snapshot`. The authenticated mock-run endpoint resumes
   clarifying/awaiting_relaxation requests with a structured TripRequest and answer_raw;
   expected_transitions optionally detects stale updates. Request locks serialize writers.
-  Native LangGraph checkpointers and natural-language answer parsing remain unsupported.
+  Native LangGraph checkpointers and natural-language answer parsing remain unsupported
+  in the current implementation; the target unified chat/graph state machine is planned.
 - Technical exceptions fail immediately. There is no automatic provider retry;
   the configured workflow retry budget covers replanning Engine attempts.
 
