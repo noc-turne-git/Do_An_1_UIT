@@ -671,9 +671,26 @@ class ValidationResult(Contract):
         return self
 
 
+class QuestionOption(Model):
+    option_id: str
+    city: str
+    province: str | None = None
+    country: str | None = None
+    reason: str | None = None
+
+
 class PendingQuestion(Model):
     question: str
     fields: list[str]
+    kind: Literal["trip_request", "destination_choice"] = "trip_request"
+    options: list[QuestionOption] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_option_ids(self):
+        option_ids = [option.option_id for option in self.options]
+        if len(option_ids) != len(set(option_ids)):
+            raise ValueError("question option_id values must be unique")
+        return self
 
 
 class AnswerHistory(Model):
@@ -725,6 +742,7 @@ class WorkflowState(Contract):
     clarification_round: Minutes
     max_clarification_rounds: Minutes = 3
     destination_round: Minutes = 0
+    max_destination_rounds: Minutes = 2
     pending_fields: list[str]
     retry_count: Minutes
 
@@ -732,6 +750,8 @@ class WorkflowState(Contract):
     def clarification_consistent(self):
         if self.clarification_round > self.max_clarification_rounds:
             raise ValueError("clarification limit exceeded")
+        if self.destination_round > self.max_destination_rounds:
+            raise ValueError("destination limit exceeded")
         return self
 
 

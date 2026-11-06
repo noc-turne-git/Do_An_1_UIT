@@ -200,6 +200,13 @@
       "title": "Destination Round",
       "type": "integer"
     },
+    "max_destination_rounds": {
+      "default": 2,
+      "maximum": 2147483647,
+      "minimum": 0,
+      "title": "Max Destination Rounds",
+      "type": "integer"
+    },
     "pending_fields": {
       "items": {
         "type": "string"

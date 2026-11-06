@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from shared.contracts import (TripRequest, DestinationResult, PlaceCandidate, CostedPlaceCandidate,
+from shared.contracts import (PendingQuestion, TripRequest, DestinationResult, PlaceCandidate, CostedPlaceCandidate,
     TimeConstraints, PlanningInput, Itinerary, ValidationResult, WorkflowState)
 from shared.contracts import (ActivityCount, ActivityWindow, Constraint, CostRange,
     MealWindow, OpeningHours, VisitDuration)
@@ -282,12 +282,44 @@ def test_workflow_clarification():
     from uuid import uuid4
     data=dict(request_id=uuid4(),trip_id=uuid4(),status="clarifying",current_step="request_parser",completed_steps=[],artifacts={},
         clarification_round=1,max_clarification_rounds=3,pending_fields=["trip.start_date"],retry_count=0)
+    restored = WorkflowState.model_validate(data)
+    assert restored.destination_round == 0
+    assert restored.max_destination_rounds == 2
+    data["destination_round"] = 2
+    data["max_destination_rounds"] = 2
     WorkflowState.model_validate(data)
+    data["destination_round"] = 3
+    with pytest.raises(ValidationError): WorkflowState.model_validate(data)
+    data["destination_round"] = 0
     data["pending_questions"]=[]
     with pytest.raises(ValidationError): WorkflowState.model_validate(data)
     data.pop("pending_questions")
     data["clarification_round"]=4
     with pytest.raises(ValidationError): WorkflowState.model_validate(data)
+
+
+def test_pending_question_defaults_and_unique_options():
+    legacy = PendingQuestion.model_validate(dict(question="Chọn điểm đến", fields=["destination.city"]))
+    assert legacy.kind == "trip_request" and legacy.options == []
+    destination = PendingQuestion.model_validate(dict(
+        question="Chọn một khu vực", fields=["destination.city"], kind="destination_choice",
+        options=[dict(option_id="da-lat-lam-dong", city="Đà Lạt", province="Lâm Đồng", reason="Khí hậu mát")],
+    ))
+    assert destination.options[0].option_id == "da-lat-lam-dong"
+    with pytest.raises(ValidationError, match="option_id"):
+        PendingQuestion.model_validate(dict(question="Trùng", fields=["destination.city"], options=[
+            dict(option_id="same", city="Đà Lạt"), dict(option_id="same", city="Nha Trang"),
+        ]))
+
+
+def test_workflow_state_schema_exports_destination_limits():
+    schema = WorkflowState.model_json_schema()
+    assert schema["properties"]["destination_round"]["default"] == 0
+    assert schema["properties"]["max_destination_rounds"]["default"] == 2
+    schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+    expected = json.dumps(schema, indent=2, ensure_ascii=False) + "\n"
+    exported = (Path(__file__).resolve().parents[2] / "shared/schemas/workflow_state.json").read_text(encoding="utf-8")
+    assert exported == expected
 
 
 def test_required_meal_can_exceed_soft_window(request_data,defaults):
