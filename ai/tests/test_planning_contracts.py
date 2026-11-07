@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from shared.contracts import (PendingQuestion, TripRequest, DestinationResult, PlaceCandidate, CostedPlaceCandidate,
+from shared.contracts import (AnswerHistory, PendingQuestion, TripRequest, DestinationResult, PlaceCandidate, CostedPlaceCandidate,
     TimeConstraints, PlanningInput, Itinerary, ValidationResult, WorkflowState)
 from shared.contracts import (ActivityCount, ActivityWindow, Constraint, CostRange,
     MealWindow, OpeningHours, VisitDuration)
@@ -310,6 +310,15 @@ def test_pending_question_defaults_and_unique_options():
         PendingQuestion.model_validate(dict(question="Trùng", fields=["destination.city"], options=[
             dict(option_id="same", city="Đà Lạt"), dict(option_id="same", city="Nha Trang"),
         ]))
+
+
+def test_answer_history_kind_is_backward_compatible():
+    legacy = AnswerHistory.model_validate(dict(round=1, asked_fields=["trip.start_date"],
+        question="Ngày nào?", answer_raw="14/11", resolved_fields=["trip.start_date"],
+        declared_unknown_fields=[]))
+    assert legacy.kind == "trip_request"
+    destination = legacy.model_copy(update={"kind": "destination_choice"})
+    assert destination.kind == "destination_choice" and destination.round == 1
 
 
 def test_workflow_state_schema_exports_destination_limits():

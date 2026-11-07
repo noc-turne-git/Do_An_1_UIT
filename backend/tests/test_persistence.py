@@ -7,8 +7,8 @@ from sqlalchemy.orm import configure_mappers
 
 from shared.errors import ApplicationError
 from app.db.base import Base
-from app.db.models import TripRecord, WorkflowRequestRecord, WorkflowArtifactRecord
-from shared.contracts import TripRequest
+from app.db.models import ClarificationRoundRecord, TripRecord, WorkflowRequestRecord, WorkflowArtifactRecord
+from shared.contracts import AnswerHistory, TripRequest, WorkflowState
 from app.repositories.artifacts import ArtifactRepository
 from app.repositories.workflows import TripRepository, RequestRepository
 from ai.orchestration.mock_workflow import fixture
@@ -22,6 +22,29 @@ def test_core_mapping():
     for cls, key in [(TripRecord, 'trip_id'), (WorkflowRequestRecord, 'request_id'),
                      (WorkflowArtifactRecord, 'artifact_id')]:
         assert cls.__table__.c[key].type.as_uuid
+    assert WorkflowRequestRecord.__table__.c.max_destination_rounds.server_default.arg.text == '2'
+    assert ClarificationRoundRecord.__table__.c.kind.server_default.arg.text == "'trip_request'"
+    assert any(set(constraint.columns.keys()) == {'request_id', 'kind', 'round'}
+               for constraint in ClarificationRoundRecord.__table__.constraints
+               if constraint.__class__.__name__ == 'UniqueConstraint')
+
+
+def test_legacy_graph_snapshot_defaults_clarification_kinds():
+    from ai.orchestration.graph_workflow import GraphRun
+    state = WorkflowState(request_id=uuid4(), trip_id=uuid4(), status='clarifying',
+        current_step='request_parser', completed_steps=[], artifacts={}, clarification_round=1,
+        pending_fields=['trip.start_date'], retry_count=0).model_dump()
+    state.pop('destination_round')
+    state.pop('max_destination_rounds')
+    snapshot = dict(state=state, answers_history=[dict(round=1, asked_fields=['trip.start_date'],
+        question='Ngày nào?', answer_raw='14/11', resolved_fields=['trip.start_date'],
+        declared_unknown_fields=[])])
+    restored = GraphRun.model_validate(snapshot)
+    assert restored.state.destination_round == 0
+    assert restored.state.max_destination_rounds == 2
+    assert restored.answers_history == [AnswerHistory(round=1, kind='trip_request',
+        asked_fields=['trip.start_date'], question='Ngày nào?', answer_raw='14/11',
+        resolved_fields=['trip.start_date'], declared_unknown_fields=[])]
 
 
 def test_trip_creation_uses_authenticated_owner():

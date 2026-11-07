@@ -59,7 +59,7 @@ class RequestRepository(OwnedRepository):
         if row.trip_id != state.trip_id:
             raise ApplicationError("planning_input_inconsistent", "Trip and request differ")
         for field in ("status", "current_step", "clarification_round", "max_clarification_rounds",
-                      "destination_round", "retry_count"):
+                       "destination_round", "max_destination_rounds", "retry_count"):
             setattr(row, field, getattr(state, field))
         self.session.flush()
         return row

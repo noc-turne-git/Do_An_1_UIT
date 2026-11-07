@@ -89,12 +89,15 @@ class WorkflowRequestRecord(Base):
     clarification_round: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('0'))
     max_clarification_rounds: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('3'))
     destination_round: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('0'))
+    max_destination_rounds: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('2'))
     retry_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('0'))
     graph_snapshot: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()'))
     updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()'), server_onupdate=sa.FetchedValue())
     __table_args__ = (
         sa.UniqueConstraint('request_id', 'trip_id'),
+        sa.CheckConstraint('max_destination_rounds >= 0 AND destination_round <= max_destination_rounds',
+                           name='workflow_requests_destination_round_limit_check'),
         sa.Index('workflow_requests_trip_idx', 'trip_id'),
     )
     trip: Mapped["TripRecord"] = relationship(foreign_keys=[trip_id])
@@ -127,6 +130,7 @@ class ClarificationRoundRecord(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, nullable=False, server_default=sa.text('gen_random_uuid()'))
     request_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('workflow_requests.request_id', ondelete="CASCADE"), nullable=False)
     round: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=sa.text("'trip_request'"))
     asked_fields: Mapped[dict | list] = mapped_column(JSONB(none_as_null=True), nullable=False)
     question: Mapped[str] = mapped_column(sa.Text, nullable=False)
     answer_raw: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
@@ -134,7 +138,7 @@ class ClarificationRoundRecord(Base):
     declared_unknown_fields: Mapped[dict | list | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()'))
     __table_args__ = (
-        sa.UniqueConstraint('request_id', 'round'),
+        sa.UniqueConstraint('request_id', 'kind', 'round'),
         sa.Index("clarification_rounds_request_idx", "request_id"),
     )
 

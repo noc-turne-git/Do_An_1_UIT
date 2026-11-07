@@ -695,6 +695,7 @@ class PendingQuestion(Model):
 
 class AnswerHistory(Model):
     round: int
+    kind: Literal["trip_request", "destination_choice"] = "trip_request"
     asked_fields: list[str]
     question: str
     answer_raw: str

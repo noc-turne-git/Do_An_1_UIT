@@ -1635,6 +1635,7 @@
     "answers": [
       {
         "round": 1,
+        "kind": "trip_request",
         "asked_fields": [
           "budget.amount"
         ],
@@ -3014,6 +3015,7 @@
     "answers": [
       {
         "round": 1,
+        "kind": "trip_request",
         "asked_fields": [
           "budget.amount"
         ],

@@ -14,7 +14,7 @@ from app.core.config import Settings
 from shared.errors import ApplicationError
 from app.db.session import Database
 from app.db.models import WorkflowArtifactRecord, WorkflowRequestRecord
-from shared.contracts import TripRequest
+from shared.contracts import AnswerHistory, PendingQuestion, TripRequest, WorkflowState
 from app.repositories.workflows import TripRepository, RequestRepository
 from app.repositories.artifacts import ArtifactRepository
 from ai.orchestration.mock_workflow import fixture, mock_components
@@ -53,12 +53,29 @@ def database():
         connection.execute(text("""CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
           SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$"""))
         connection.execute(text('GRANT USAGE ON SCHEMA auth, public TO anon, authenticated, service_role'))
-    # Execute canonical SQL exactly, including transaction and triggers; no create_all.
-    with db.engine.connect() as connection:
-        connection = connection.execution_options(isolation_level='AUTOCOMMIT')
-        # No DBAPI parameters: PL/pgSQL format('%I') must not be parsed as placeholders.
-        with connection.connection.driver_connection.cursor() as cursor:
-            cursor.execute((ROOT / 'supabase/schema.sql').read_text(encoding='utf-8'))
+    # The canonical Alembic branch executes the immutable Supabase baseline and
+    # then its sequential structural migrations; no create_all.
+    from alembic import command
+    from alembic.config import Config
+    config = Config(str(ROOT / 'alembic.ini'))
+    config.attributes['database_url'] = url.render_as_string(hide_password=False)
+    # Establish the new canonical baseline, then exercise the ordinary
+    # sequential upgrade used by a database that already has that baseline.
+    command.upgrade(config, '20261105_canonical_baseline')
+    legacy_user, legacy_trip, legacy_request = uuid4(), uuid4(), uuid4()
+    with db.engine.begin() as connection:
+        connection.execute(text('INSERT INTO auth.users(id) VALUES (:id)'), {'id': legacy_user})
+        connection.execute(text('INSERT INTO trips(trip_id, user_id, title) VALUES (:trip, :user, :title)'),
+                           {'trip': legacy_trip, 'user': legacy_user, 'title': 'pre-upgrade'})
+        connection.execute(text('''INSERT INTO workflow_requests
+            (request_id, trip_id, schema_version, status, current_step)
+            VALUES (:request, :trip, '1.0', 'clarifying', 'request_parser')'''),
+                           {'request': legacy_request, 'trip': legacy_trip})
+        connection.execute(text('''INSERT INTO clarification_rounds
+            (request_id, round, asked_fields, question)
+            VALUES (:request, 1, '[]'::jsonb, 'pre-upgrade')'''), {'request': legacy_request})
+    command.upgrade(config, 'canonical@head')
+    db.pre_upgrade_request_id = legacy_request
     yield db
     db.dispose()
     # Intentionally no destructive teardown. Recreate disposable DB before next run.
@@ -72,6 +89,74 @@ def seed(db):
         trip = TripRepository(session, user).create(title='test')
         request = RequestRepository(session, user).create(trip.trip_id)
         return user, trip.trip_id, request.request_id
+
+
+@pytest.mark.postgres
+def test_canonical_migration_backfills_round_defaults_and_allows_kind_pair(database):
+    user, _, request = seed(database)
+    with database.engine.begin() as connection:
+        legacy = connection.execute(text('''SELECT destination_round, max_destination_rounds
+            FROM workflow_requests WHERE request_id=:id'''),
+            {'id': database.pre_upgrade_request_id}).one()
+        assert legacy == (0, 2)
+        assert connection.execute(text('''SELECT kind FROM clarification_rounds
+            WHERE request_id=:id AND round=1'''),
+            {'id': database.pre_upgrade_request_id}).scalar_one() == 'trip_request'
+        row = connection.execute(text('''SELECT destination_round, max_destination_rounds
+            FROM workflow_requests WHERE request_id=:id'''), {'id': request}).one()
+        assert row == (0, 2)
+        for kind in ('trip_request', 'destination_choice'):
+            connection.execute(text('''INSERT INTO clarification_rounds
+                (request_id, round, kind, asked_fields, question)
+                VALUES (:request_id, 1, :kind, '[]'::jsonb, :question)'''),
+                {'request_id': request, 'kind': kind, 'question': kind})
+        count = connection.execute(text('''SELECT count(*) FROM clarification_rounds
+            WHERE request_id=:id AND round=1'''), {'id': request}).scalar_one()
+        assert count == 2
+
+
+@pytest.mark.postgres
+def test_persistence_round_kind_and_round_are_preserved(database):
+    from ai.orchestration.workflow_state import WorkflowRun
+    user, trip, request = seed(database)
+    trip_answer = AnswerHistory(round=1, kind='trip_request', asked_fields=['trip.start_date'],
+        question='Khi nào đi?', answer_raw='2026-12-01', resolved_fields=['trip.start_date'],
+        declared_unknown_fields=[])
+    trip_run = WorkflowRun(state=WorkflowState(request_id=request, trip_id=trip, status='clarifying',
+        current_step='request_parser', completed_steps=[], artifacts={}, clarification_round=1,
+        destination_round=0, pending_fields=['trip.start_date'], retry_count=0),
+        pending_questions=[PendingQuestion(question='Khi nào đi?', fields=['trip.start_date'])],
+        answers_history=[trip_answer])
+    with database.sessions.begin() as session:
+        WorkflowPersistence(session, user).sync(trip_run)
+    destination_answer = AnswerHistory(round=1, kind='destination_choice', asked_fields=['destination.city'],
+        question='Chọn khu vực', answer_raw='option-da-lat', resolved_fields=['destination.city'],
+        declared_unknown_fields=[])
+    destination_question_run = WorkflowRun(state=WorkflowState(request_id=request, trip_id=trip, status='clarifying',
+        current_step='destination_agent', completed_steps=[], artifacts={}, clarification_round=1,
+        destination_round=1, max_destination_rounds=2, pending_fields=['destination.city'], retry_count=0),
+        pending_questions=[PendingQuestion(question='Chọn khu vực', fields=['destination.city'],
+            kind='destination_choice')])
+    with database.sessions.begin() as session:
+        WorkflowPersistence(session, user).sync(destination_question_run)
+    with database.sessions.begin() as session:
+        pending_run = WorkflowPersistence(session, user).load(request)
+    assert {question.kind for question in pending_run.pending_questions} == {'destination_choice'}
+    destination_answer_run = WorkflowRun(state=WorkflowState(request_id=request, trip_id=trip, status='planning',
+        current_step='destination_agent', completed_steps=[], artifacts={}, clarification_round=1,
+        destination_round=1, max_destination_rounds=2, pending_fields=[], retry_count=0),
+        answers_history=[trip_answer, destination_answer])
+    with database.sessions.begin() as session:
+        WorkflowPersistence(session, user).sync(destination_answer_run)
+    with database.sessions.begin() as session:
+        restored = WorkflowPersistence(session, user).load(request)
+    assert restored.state.destination_round == 1
+    assert restored.state.max_destination_rounds == 2
+    assert {(answer.kind, answer.round) for answer in restored.answers_history} == {
+        ('trip_request', 1), ('destination_choice', 1)}
+    assert {(answer.kind, answer.answer_raw) for answer in restored.answers_history} == {
+        ('trip_request', trip_answer.answer_raw),
+        ('destination_choice', destination_answer.answer_raw)}
 
 
 @pytest.mark.postgres

@@ -54,16 +54,23 @@ class WorkflowPersistence(OwnedRepository):
     def sync(self, run):
         RequestRepository(self.session, self.user_id).update_projection(run.state)
         request_id = run.state.request_id
-        rounds = {r.round: r for r in self.session.scalars(select(ClarificationRoundRecord).where(
+        rounds = {(r.kind, r.round): r for r in self.session.scalars(select(ClarificationRoundRecord).where(
             ClarificationRoundRecord.request_id == request_id))}
-        if run.state.status == 'clarifying' and run.state.clarification_round not in rounds:
+        question_kinds = {question.kind for question in run.pending_questions}
+        if len(question_kinds) > 1:
+            raise ValueError('A clarification batch must have one question kind')
+        question_kind = next(iter(question_kinds), 'trip_request')
+        question_round = (run.state.destination_round if question_kind == 'destination_choice'
+                          else run.state.clarification_round)
+        round_key = (question_kind, question_round)
+        if run.state.status == 'clarifying' and round_key not in rounds:
             row = ClarificationRoundRecord(id=uuid4(), request_id=request_id,
-                round=run.state.clarification_round, asked_fields=run.state.pending_fields,
+                kind=question_kind, round=question_round, asked_fields=run.state.pending_fields,
                 question=' '.join(q.question for q in run.pending_questions))
             self.session.add(row)
-            rounds[row.round] = row
+            rounds[(row.kind, row.round)] = row
         for answer in run.answers_history:
-            row = rounds[answer.round]
+            row = rounds[(answer.kind, answer.round)]
             row.answer_raw = answer.answer_raw
             row.resolved_fields = answer.resolved_fields
             row.declared_unknown_fields = answer.declared_unknown_fields
@@ -104,16 +111,22 @@ class WorkflowPersistence(OwnedRepository):
         pending = list(self.session.scalars(select(PendingItemRecord).where(
             PendingItemRecord.request_id == request_id, PendingItemRecord.status == 'open')))
         rounds = list(self.session.scalars(select(ClarificationRoundRecord).where(
-            ClarificationRoundRecord.request_id == request_id).order_by(ClarificationRoundRecord.round)))
+            ClarificationRoundRecord.request_id == request_id).order_by(
+                ClarificationRoundRecord.kind, ClarificationRoundRecord.round)))
+        open_round_kinds = {round_.kind for round_ in rounds if round_.answer_raw is None}
+        if pending and len(open_round_kinds) > 1:
+            raise ValueError('Open pending items map to multiple clarification kinds')
+        pending_kind = next(iter(open_round_kinds), 'trip_request')
         run = WorkflowRun(state=WorkflowState(request_id=request_id, trip_id=request.trip_id,
             schema_version=request.schema_version, status=request.status, current_step=request.current_step,
             completed_steps=[step for step in STEPS if step in TYPES and TYPES[step] in latest],
             artifacts=ArtifactReferences(**refs), clarification_round=request.clarification_round,
             max_clarification_rounds=request.max_clarification_rounds, destination_round=request.destination_round,
+            max_destination_rounds=request.max_destination_rounds,
             retry_count=request.retry_count, pending_fields=[p.field_path for p in pending]),
             artifacts={a.artifact_id: a.payload for a in artifacts},
-            pending_questions=[dict(question=p.question, fields=[p.field_path]) for p in pending],
-            answers_history=[AnswerHistory(round=r.round, asked_fields=r.asked_fields, question=r.question,
+            pending_questions=[dict(question=p.question, fields=[p.field_path], kind=pending_kind) for p in pending],
+            answers_history=[AnswerHistory(round=r.round, kind=r.kind, asked_fields=r.asked_fields, question=r.question,
                 answer_raw=r.answer_raw, resolved_fields=r.resolved_fields or [],
                 declared_unknown_fields=r.declared_unknown_fields or []) for r in rounds if r.answer_raw is not None])
         run.attempts = [Attempt(attempt=a.attempt_no, step=a.step, random_seed=a.random_seed,

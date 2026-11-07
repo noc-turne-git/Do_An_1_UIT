@@ -1,6 +1,6 @@
 # Schema Supabase cho hệ thống lập lịch trình
 
-`schema.sql` là DDL đầy đủ cho **database Supabase mới**, chạy một lần bằng SQL Editor với quyền database owner. Script chạy trong một transaction, tạo enum, 19 bảng, FK, CHECK, index, trigger và policy. Mỗi bảng có chú thích mục đích ngay trước `CREATE TABLE`.
+`schema.sql` là DDL baseline bất biến cho **database Supabase mới**, chạy một lần bằng SQL Editor với quyền database owner. Script chạy trong một transaction, tạo enum, 19 bảng, FK, CHECK, index, trigger và policy. Mỗi bảng có chú thích mục đích ngay trước `CREATE TABLE`. Sau baseline, áp dụng mọi migration trong `migrations/` theo thứ tự phiên bản.
 
 Đây là lựa chọn **DDL SQL** trong yêu cầu, không phải migration nâng cấp schema hiện tại. Không chạy lên database đã có bảng `trips` của Alembic `0001`. Model và repository đã đồng bộ schema mới; dữ liệu cũ vẫn cần chuyển đổi riêng. Script chưa được áp dụng lên Supabase.
 
@@ -48,14 +48,33 @@ Production nên dùng role runtime **không phải admin**, được cấp quy�
 ## Việc cần làm tay
 
 1. Cài dependencies mới (httpx là dependency runtime).
-2. Tự chạy schema.sql trên database Supabase mới/rỗng bằng SQL Editor, không chạy đè schema Alembic cũ. Đăng ký/đăng nhập qua Supabase Auth để có profile; script backfill cho user đã tồn tại.
+2. Với database Supabase mới/rỗng: chạy schema.sql, sau đó chạy tuần tự mọi file trong `migrations/` (hiện có `20261107_clarification_round_kinds.sql`). Đăng ký/đăng nhập qua Supabase Auth để có profile; script backfill cho user đã tồn tại.
 3. Bổ sung SUPABASE_URL và SUPABASE_PUBLISHABLE_KEY vào backend/.env. Dùng publishable/legacy anon key, không cần service role API key cho xác minh token. DATABASE_URL chỉ ở server.
 4. Chuẩn bị role runtime không phải admin và kiểm tra grants/RLS phù hợp triển khai.
 5. Nếu giữ dữ liệu cũ: backup, tạo DB đích mới, ánh xạ ID chuỗi → UUID, xác định chủ sở hữu từng trip, trích workflow/artifact và dựng parent/latest. Không tự gán owner hay ép chuỗi tùy ý thành UUID. Chưa có công cụ chuyển dữ liệu trong đợt này.
 
 ## Alembic
 
-Giữ nguyên alembic/versions/0001_initial.py, không xóa, không chạy upgrade/downgrade, kể cả integration test. Revision này tạo 3 bảng cũ. Không autogenerate rồi áp dụng thẳng vì ORM không quản lý CHECK/trigger/RLS của SQL chuẩn. Nếu tiếp tục Alembic, cần baseline riêng sau khi kiểm chứng DB đích; không stamp 0001 để tuyên bố đã tạo 19 bảng.
+Alembic có hai branch tách biệt. `0001_initial.py` là legacy, được giữ nguyên để
+audit lịch sử và **không** là parent của canonical schema. Canonical branch bắt
+đầu tại `20261105_canonical_baseline`: revision này kiểm SHA-256 rồi chạy đúng
+baseline `schema.sql`; migration tiếp theo chạy tuần tự trên branch `canonical`.
+
+- Database mới có Supabase Auth scaffold: `alembic upgrade canonical@head`.
+- Database canonical đã tồn tại ở đúng `schema.sql` nhưng **chưa** có migration
+  mới: backup và kiểm chứng cột/constraint hiện hữu, rồi mới
+  `alembic stamp 20261105_canonical_baseline` và
+  `alembic upgrade canonical@head`. Nếu migration
+  `20261107_clarification_round_kinds` đã được chạy thủ công và schema đã khớp
+  head, stamp trực tiếp revision đó; không stamp baseline rồi chạy lại. Không
+  có thao tác stamp tự động.
+- Database đang ở legacy `0001`: không được stamp canonical hoặc chạy canonical
+  upgrade. Cần một dự án chuyển dữ liệu riêng (owner/UUID/payload mapping) sau
+  backup và đối soát; migration này không tự đoán mapping.
+
+`20261105_canonical_baseline` không hỗ trợ downgrade vì rollback sẽ phá hủy
+canonical schema. `20261107_clarification_round_kinds` chỉ downgrade khi chưa
+có `destination_choice` history hoặc destination state không-default.
 
 ## Kiểm tra local
 
