@@ -12,6 +12,11 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(AISettings):
+    """Inherits canonical clarification config and validation from AISettings.
+
+    Backend env loading must not redefine the fixed destination budget or supply
+    unapproved preference defaults. build_clarification_policy() returns a copy.
+    """
     model_config = SettingsConfigDict(env_file=BACKEND_ROOT / ".env", extra="ignore")
     app_name: str = "Travel Planning API"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

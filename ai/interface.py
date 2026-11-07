@@ -5,6 +5,12 @@ from ai.orchestration.request_parser import empty_request, parse_turn as _parse_
 from ai.orchestration.workflow_state import WorkflowRun
 from ai.logging import log_execution
 from shared.validation import validate_trip_request
+from ai.orchestration.clarification_policy import ClarificationPolicy
+
+
+def get_clarification_policy(settings) -> ClarificationPolicy:
+    """Export validated configuration without applying defaults or routing a run."""
+    return settings.build_clarification_policy()
 
 
 def build_orchestrator(settings):
