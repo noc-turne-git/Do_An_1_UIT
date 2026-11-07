@@ -1,140 +1,100 @@
-# Clarification policy (planned)
+# Canonical clarification policy — lifecycle B
 
-Tài liệu này chốt policy cho vòng hỏi lại thông tin thiếu. Nguồn schema là
-[`docs/architecture/Cấu trúc schema.md`](../architecture/Cấu%20trúc%20schema.md),
-nhất là mục 2, 6, 9.2, 9.3, 9.4 và 10. Khi policy này nêu field/schema chưa có
-trong `shared/contracts.py`, field đó được đánh dấu **planned**; tài liệu không
-khẳng định code hiện hành đã hỗ trợ nó.
+Đây là nguồn thiết kế canonical cho contracts, persistence và orchestration.
+Giữ tên selected_region, question, fields; không đổi tên theo ví dụ minh họa.
 
-## 1. Luồng và điều kiện rẽ nhánh
+## Intent và quyền chọn
 
-Sau Request Parser và Pydantic validation, CODE tính `pending_fields`.
-
-1. `pending_fields` **rỗng**: đi Destination Agent (Agent A).
-2. `pending_fields` **không rỗng**: dùng counter áp dụng để hỏi user nếu còn
-   lượt; nếu đã hết lượt thì áp default/fail theo bảng ở mục 4.
-3. Một round chỉ tăng khi CODE đã có bộ câu hỏi hợp lệ và thực sự gửi bộ đó cho
-   user. Không tăng khi LLM output sai, khi fallback chưa được gửi, hoặc khi
-   chỉ tính lại pending fields.
-
-`pending_fields` do CODE quyết định. LLM chỉ extract thay đổi từ lời user và
-diễn đạt câu hỏi; LLM không quyết định route, counter, default hay failed.
-
-## 2. Hai counter độc lập (**planned fields/config**)
-
-| Counter | Max | Dùng cho | Không dùng cho |
-| --- | ---: | --- | --- |
-| `clarification_round` | 3 | Trường thiếu của TripRequest; `needs_more_info` từ Agent A | `needs_user_choice`, `no_valid_candidate` |
-| `destination_round` | 2 | `needs_user_choice`, `no_valid_candidate` từ Agent A | Trường thiếu TripRequest, `needs_more_info` |
-
-`max_clarification_rounds=3` đã có trong schema hiện hành. `max_destination_rounds=2`
-là **planned** và phải có default tương thích snapshot cũ. `destination_round`
-đã có default `0` trong schema hiện hành, nhưng giới hạn/validation đầy đủ là
-**planned**.
-
-### Ánh xạ `selection_status`
-
-| `selection_status` | Hành động CODE | Counter |
+| selection_intent | Ý nghĩa | selection_authority |
 | --- | --- | --- |
-| `selected` | Lưu DestinationResult mới và đi Constraint Planner | Không tăng |
-| `needs_more_info` | Gộp `missing_fields` vào `pending_fields`; hỏi/default/fail theo policy TripRequest | `clarification_round` |
-| `needs_user_choice` | Soạn lựa chọn từ `candidate_regions`; chờ lựa chọn | `destination_round` |
-| `no_valid_candidate` | Hỏi đổi điều kiện khi còn lượt; hết lượt thì failed | `destination_round` |
+| EXPLICIT | User chỉ định điểm đến | user |
+| ANY | User chủ động cho phép hệ thống chọn | delegated khi có provenance user |
+| UNKNOWN | User nói chưa biết chọn đâu | none |
+| UNSPECIFIED | Chưa có bằng chứng ý định | none |
 
-Với destination `implicit`, nếu Agent A chọn được đúng một khu vực thì trả
-`selected`, lưu kết quả và không tốn counter.
+selection_mode (explicit/implicit/ambiguous) mô tả cách resolve địa danh,
+không phải intent hoặc quyền ủy thác. implicit không suy ra ANY. Một candidate
+duy nhất không cấp quyền chọn cho UNKNOWN/UNSPECIFIED. selection_provenance lưu
+source, evidence user và question_id/episode_id nếu quyết định từ câu trả lời.
+Legacy thiếu intent/authority dùng UNSPECIFIED/none, không suy ra từ city hay
+field_sources. User chọn option tạo EXPLICIT/user. Default theo ANY giữ intent
+ANY và provenance default, không giả thành user chọn.
 
-## 3. Câu hỏi và câu trả lời
+## Ba question kinds, phân loại theo mục đích
 
-LLM có thể gộp nhiều field vào một câu hỏi. CODE validate đúng một lần trước
-khi gửi:
+| kind | Mục đích | Budget |
+| --- | --- | --- |
+| trip_request | Hoàn thiện dữ liệu cơ bản để lập chuyến | clarification_round, tối đa 3 |
+| destination_info | Thông tin resolve điểm đến hoặc xác nhận đổi constraint | destination_round, tối đa 2 trong episode |
+| destination_choice | Chọn candidate trong snapshot options | Cùng budget destination |
 
-1. mỗi `fields` là tập con của `pending_fields`;
-2. hợp các `fields` bao phủ toàn bộ `pending_fields`;
-3. mỗi câu có `question` không rỗng và `fields` không rỗng;
-4. một field không xuất hiện trong nhiều câu của cùng bộ.
+Không suy kind từ field path hoặc chỉ từ selection_status. Budget có thể được hỏi
+để hoàn thiện chuyến hoặc để phân biệt điểm đến. needs_more_info dùng structured
+information_requests (purpose, fields, reason); no_valid_candidate dùng structured
+recovery (reason, fields, constraint_proposal). Không route bằng prose trong
+selection_reason hoặc placeholder destination.*. Không tự nới hard constraints.
 
-Nếu bất kỳ điều kiện nào sai, CODE dùng ngay câu hỏi mẫu theo field/group field.
-Không retry LLM chỉ để soạn lại câu hỏi.
+Counter chỉ tăng khi question mới có identity được persist/issued thành công.
+Retry cùng question_id và nội dung không tăng; cùng ID khác nội dung bị từ chối.
+Agent A chạy lại không tiêu lượt hỏi. Slot duy nhất là (episode_id, counter_group,
+round); kind chỉ mô tả mục đích. Một câu có thể gộp nhiều fields. Issuance và cập
+nhật budget nằm trong cùng transaction.
 
-Khi user trả lời, CODE ghi `answers_history` với câu hỏi đã gửi, raw answer,
-resolved fields và declared-unknown fields. Giá trị user mới nhất ghi đè giá trị
-cũ với `source=user`; không cần cơ chế revision riêng.
+Question lưu ID, episode, kind, status, intent/round snapshot, fields, toàn bộ
+options (stable option/candidate ID, rank, reason), constraint proposal. Answer
+liên kết đúng episode/question; option phải thuộc snapshot đã issued. Reject
+stale, cross-episode và retry khác nội dung. Không dựng question từ pending_items
+theo field. Question thứ hai đang open vẫn nhận câu trả lời khi counter bằng 2;
+chỉ cấm phát câu thứ ba.
 
-### Lựa chọn từ Agent A (**planned option contract**)
+## Hết budget và final resolve
 
-Mỗi ứng viên hiển thị phải có `option_id` ổn định cùng city/province/country và
-reason. UI chỉ gửi `option_id`. CODE tra `option_id` trong candidate list của
-round đang chờ, rồi ghi destination với `source=default` khi áp candidate mặc
-định, hoặc `source=user` khi user chọn.
+Sau câu trả lời cuối hoặc đóng question theo hành động tường minh của user, chạy
+đúng một final resolve với dữ liệu mới. Persist operation ID và trạng thái
+not_started → claimed → completed cùng result. Restart dùng lại completed result;
+claimed không tự chạy lại nghiệp vụ, cần reconcile theo operation ID.
 
-Nếu user gõ tên tự do, CODE chỉ tự khớp khi đúng một candidate. Không khớp hoặc
-khớp hơn một candidate thì giữ unresolved và hỏi lại; không tự chọn theo tên.
+Chỉ ANY với authority delegated và bằng chứng user mới được default candidate
+rank=1 sau final resolve completed, khi candidate vẫn hợp lệ. Rank không phải vị
+trí array. UNKNOWN/UNSPECIFIED không default, kể cả chỉ còn một candidate; thiếu
+lựa chọn/ủy quyền thì failed. Không có candidate hợp lệ thì failed. EXPLICIT chỉ
+xác minh nơi user đã chỉ định, không thay bằng nơi khác.
 
-## 4. Hết lượt, unknown và default
+TripRequest hết lượt chỉ áp defaults đã cấu hình: children=0, preferences theo
+config; budget.amount giữ null nếu chưa biết. start_date/end_date, adults và city
+explicit không default; declared_unknown không bỏ qua các field bắt buộc này.
+end_date = start_date + duration_days - 1; ngày mơ hồ phải hỏi lại.
 
-### TripRequest / `clarification_round` hết lượt
+## Lifecycle B và compatibility
 
-| Field/tình huống | Kết quả CODE |
+Failed luôn terminal. Explicit destination sau failed bắt buộc tạo request_id
+mới VÀ episode_id mới, có thể giữ trip_id. Workflow cũ và lịch sử giữ nguyên.
+Episode mới có destination_round=0, final resolve not_started; workflow mới có
+clarification_round=retry_count=0.
+
+Seed TripRequest mới bằng deep copy TripRequest mới nhất đã validate của workflow
+cũ; giữ dữ liệu không thuộc destination và provenance của chúng. Thay toàn bộ
+destination bằng input explicit mới có provenance user; xóa metadata destination
+cũ, parser_status và missing_fields cache rồi validate lại. Không copy artifact
+references, pending questions, answers hoặc final resolve. Persist TripRequest
+thành artifact mới thuộc workflow mới trong cùng transaction.
+
+Sau completed, thay đổi yêu cầu có thể resume cùng workflow theo invalidation;
+nếu bắt đầu lựa chọn destination mới thì tạo episode mới, giữ lịch sử episode cũ.
+Không reset counter trên chính episode cũ. Runtime này còn planned.
+
+Snapshot cũ đọc được nhờ defaults. Thiếu question identity/episode hoặc thiếu
+option candidate ID/rank/reason chỉ được đọc lịch sử, không nhận selection.
+Migration không tự cấp delegation hay biến legacy thành actionable. Issuance mới
+phải dùng budget đã biết, không reset budget legacy để tiếp tục hỏi.
+
+## Mốc triển khai
+
+| Mốc | Trạng thái |
 | --- | --- |
-| `trip.start_date`, `trip.end_date`, `travelers.adults` | Never-default; còn thiếu thì `failed` |
-| `destination.city` khi `selection_mode=explicit` | Never-default; còn thiếu thì `failed` |
-| `travelers.children` | Gán `0`, `source=default` |
-| `preferences.interests`, `preferences.pace`, `preferences.transport_modes` | Đọc bảng default hệ thống trong config (**planned**), `source=default` |
-| `budget.amount`, `budget.scope` chưa có câu trả lời | `amount=null`, không default số tiền, không failed; budget được xử lý soft theo mục 5 |
-| `needs_more_info` | Áp dụng bảng này; never-default còn thiếu thì failed |
+| Commit 1 | Policy và tài liệu thống nhất; chưa thay runtime |
+| Commit 2 | Contracts, invariants, serialization và JSON Schema |
+| Commit 3 | Migration mới, atomic episode/question/answer storage, lifecycle factory, final-resolve persistence; kiểm chứng PostgreSQL riêng |
+| Planned sau Commit 3 | Parser intent, Agent A routing, sửa graph tăng counter mỗi lần Agent A chạy, state machine gọi issuance/final resolve, Chat integration |
 
-`declared_unknown` giữ giá trị null và không hỏi lại, **trừ never-default**:
-`trip.start_date`, `trip.end_date`, `travelers.adults`, và `destination.city`
-khi explicit. Các field ngoại lệ này tiếp tục pending cho tới khi có giá trị hợp
-lệ hoặc workflow failed vì hết lượt.
-
-### Destination / `destination_round` hết lượt
-
-| Status | Kết quả CODE |
-| --- | --- |
-| `needs_user_choice` | Chọn phần tử đầu tiên của `candidate_regions`, ghi `destination.city`, `source=default`, `selection_mode=explicit` |
-| `no_valid_candidate` | `failed`; ghi errors và thông báo điều kiện/điểm đến không có ứng viên hợp lệ |
-
-## 5. Ngày và ngân sách
-
-### Ngày
-
-LLM chỉ trích xuất `trip.start_date` và `trip.duration_days`. CODE tính:
-
-```text
-trip.end_date = trip.start_date + trip.duration_days - 1 day
-```
-
-CODE dùng ngày hiện tại và timezone user để xử lý `14/11` không có năm: lấy lần
-sắp tới. Các cụm `tuần sau`, `cuối tuần`, `tháng sau`, cùng mọi ngày đã quá khứ,
-được đánh dấu ambiguous/pending và hỏi lại ngày cụ thể; CODE không suy đoán.
-
-### Ngân sách
-
-`budget.amount` và `budget.scope` được hỏi user một lần. Khi user nêu mức tối
-đa, `amount` có giá trị và `flexibility=strict`; tính hard/soft được suy ra từ
-`amount`, `flexibility` và `meta.field_sources`, không thêm `budget.is_hard`.
-
-Khi user nói “không giới hạn” hoặc “chưa biết”, ghi `amount=null`, đánh dấu
-declared_unknown và không hỏi lại. Khi hết clarification rounds mà user chưa
-trả lời, vẫn giữ `amount=null`, không failed và không gán số tiền default.
-
-## 6. Resume sau completed (**planned behavior**)
-
-Theo bảng 9.4, yêu cầu user thay đổi sau `completed` resume cùng request:
-
-- ghi input user mới với `source=user`;
-- đặt `retry_count=0`, `clarification_round=0`, `destination_round=0`;
-- invalidates outputs downstream bị ảnh hưởng;
-- artifact mới phải có ID mới; artifact JSON lịch sử giữ immutable;
-- chạy lại theo state machine, không tạo request mới chỉ vì user đổi ý.
-
-## 7. Schema/status compatibility
-
-Các ví dụ JSON hiện hành có `destination_round` và
-`max_clarification_rounds`; chúng không được giả vờ chứa field **planned** như
-`max_destination_rounds` hoặc question options. Khi thêm field mới, schema phải
-có default để snapshot JSON cũ deserialize được. Không sửa snapshot cũ hàng
-loạt; lần save/resume tiếp theo có thể ghi format mới.
-
+Ba commit nền tảng không có nghĩa clarification flow đã hoàn tất end-to-end.

@@ -1,4 +1,31 @@
-# Thiết kế lưu trữ Backend (Task 1–6)
+# Thiết kế lưu trữ Backend
+
+## Canonical clarification persistence (Commit 3)
+
+Phần skeleton bên dưới là lịch sử thiết kế. Bảng thực tế dùng workflow_requests,
+workflow_artifacts với UUID và ownership qua trips.user_id. Canonical policy ở
+[CLARIFICATION_POLICY.md](../ai/CLARIFICATION_POLICY.md) thay thế quy tắc cũ.
+
+- destination_episodes: episode_id, request_id, destination_round/max, intent,
+  authority/provenance, status và final-resolve operation ID/state/result.
+- clarification_questions: question_id, request_id, episode_id, counter_group,
+  round, kind/status và payload nguyên câu hỏi (fields, options, rank, reason,
+  intent snapshot, constraint proposal). Unique (episode_id, counter_group, round).
+- clarification_answers: answer identity và FK composite về đúng question/episode/request;
+  payload giữ lựa chọn hoặc xác nhận constraint. Retry cùng nội dung idempotent.
+- workflow_requests.active_episode_id tham chiếu episode cùng workflow; counters
+  workflow là projection, budget destination thuộc episode. pending_items chỉ là
+  projection UI, không là nguồn dựng question. Legacy clarification_rounds giữ
+  nguyên lịch sử và không cấp quyền nhận selection.
+- Request lock và transaction bảo vệ issuance/answer/budget; failed không active
+  lại. Workflow/episode mới sau failed có seed TripRequest mới và counter 0.
+- Final resolve claimed được giữ qua restart, không chạy lại nghiệp vụ; completed
+  result được tái sử dụng. Graph snapshot và relational storage giữ cùng dữ liệu.
+
+Contracts/persistence được triển khai riêng; orchestration/parser/Chat integration
+để planned ở bước tiếp theo. Các kiểm chứng thực tế ghi trong báo cáo tests.
+
+## Skeleton lịch sử (không dùng để suy ra schema hiện tại)
 
 Nguồn: [Cấu trúc schema.md](<Cấu trúc schema.md>), đặc biệt mục 2–10. Architecture.md mô tả Frontend; không thay đổi cấu trúc đó. Đây là đề xuất lưu trữ kỹ thuật, không bổ sung quy tắc nghiệp vụ. Chưa có Orchestrator, Agent, Planner hoặc Validator thật.
 
@@ -51,8 +78,8 @@ Tiền nằm trong JSONB dưới dạng integer, không đổi sang float; times
 | Điểm | Hiện trạng và xử lý trong skeleton |
 |---|---|
 | JSON/JSONC sai cú pháp | Trailing comma, smart quotes, thiếu dấu phẩy/ngoặc, `"max_candidates":100` nằm trong array, enum viết bằng dấu `/`, văn xuôi nằm trong code block. Đây là lỗi ví dụ; không suy ra thay đổi schema. Fixture TripRequest sửa cú pháp, giữ cấu trúc. |
-| selection_status | Bảng đầu nói bốn giá trị nhưng dòng thứ tư là pending_fields của WorkflowState; bảng hỏi lại sau đó thêm needs_more_info. Contract giữ cả needs_more_info vì được nêu rõ ở bảng sau, không dùng pending_fields làm status. INSUFFICIENT là request_type. Cần chốt danh sách status chính thức. |
-| Giới hạn hỏi điểm đến | Phần hỏi lại của Agent A dùng destination_round tối đa 2 và chọn ứng viên đầu làm mặc định; mục 9.2 dùng chung clarification_round tối đa 3 cho cả yêu cầu. WorkflowState theo mục 9.1, không tự thêm destination_round hoặc thực hiện default chọn ứng viên. Cần xác nhận trước Orchestrator. |
+| selection_status | Bảng đầu nói bốn giá trị nhưng dòng thứ tư là pending_fields của WorkflowState; bảng hỏi lại sau đó thêm needs_more_info. Contract giữ cả needs_more_info vì được nêu rõ ở bảng sau, không dùng pending_fields làm status. INSUFFICIENT là request_type. Danh sách này đã chốt; routing dựa vào structured information_requests/recovery và mục đích câu hỏi. |
+| Giới hạn hỏi điểm đến | Đã chốt tại CLARIFICATION_POLICY.md: destination_info/choice chia sẻ 2 lượt theo episode; ANY có delegation chỉ default rank 1 sau final resolve, UNKNOWN/UNSPECIFIED không default. |
 | Agent A/B input | Ví dụ B dùng selected_destination_id nhưng DestinationResult không định nghĩa trường này. Interface nhận nguyên DestinationResult, không tự thêm selected_destination_id. |
 | TimeConstraints | Mục 3 có pace, transport_mode; ví dụ 7/8 bỏ một số trường. Giữ cấu trúc mục 3. start_location_id/end_location_id chỉ xuất hiện trong văn xuôi: giữ nullable, không tự tạo điểm thật. |
 | Schema version | Mục 10 yêu cầu mọi hợp đồng có version nhưng nhiều ví dụ không có. Thêm schema_version mặc định 1.0 ở hợp đồng cấp bước, chấp nhận major 1, từ chối major khác; object lồng không có version riêng. |

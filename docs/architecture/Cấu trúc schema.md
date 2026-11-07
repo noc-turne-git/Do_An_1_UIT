@@ -410,22 +410,15 @@ lỗi nội dung (check 2 đến 5): selection_status = no_valid_candidate.
 
 ### 6. Hỏi lại người dùng
 
-Tùy selection_status, Orchestrator xử lý như sau:
+Policy canonical: [CLARIFICATION_POLICY.md](../ai/CLARIFICATION_POLICY.md).
 
-| selection_status | Orchestrator làm | Bộ đếm |
-| --- | --- | --- |
-| needs_more_info | Gộp missing_fields vào pending_fields (gộp thêm, không ghi đè) | clarification_round (tối đa 3 lượt) |
-| needs_user_choice | Thêm destination.city vào pending_fields, hỏi người dùng chọn trong candidate_regions | destination_round (tối đa 2 lượt) |
-| no_valid_candidate | Thêm destination.* vào pending_fields, hỏi người dùng đổi điều kiện | destination_round (tối đa 2 lượt) |
-
-Sau khi người dùng chọn xong:
-Ghi destination.city với source = user, đặt selection_mode = explicit.
-Chạy lại Agent A theo nhánh EXPLICIT.
-Kết quả mới có ID mới.
-Hết lượt mà vẫn chưa xong:
-needs_user_choice: lấy ứng viên đầu danh sách làm mặc định (source = default).
-needs_more_info: áp mặc định theo bảng trường bắt buộc ở mục 2. Không có mặc định hợp lệ thì failed.
-no_valid_candidate: không có mặc định, failed.
+Ba question kinds phân theo mục đích, không theo field path: trip_request dùng
+clarification_round (3); destination_info và destination_choice chia sẻ budget
+destination_round (2) của episode. needs_more_info dùng information_requests có
+purpose; no_valid_candidate dùng recovery có fields và constraint_proposal.
+Question thứ hai open vẫn được trả lời. Chỉ issuance identity mới tăng counter.
+ANY có delegation user chỉ default rank=1 sau final resolve đã persist;
+UNKNOWN/UNSPECIFIED không default. selection_mode không cấp authority.
 
 ## 5. Agent B và PlaceCandidate
 
@@ -1575,10 +1568,10 @@ Mỗi lần người dùng trả lời, CODE cập nhật TripRequest, xác đ�
 
 Vòng lặp hỏi lại
 - CODE tính pending_fields sau mỗi lần Request Parser tạo hoặc cập nhật TripRequest. Rỗng thì đi tiếp sang Agent A.
-- Nếu Agent A trả missing_fields (ví dụ request_type = INSUFFICIENT), CODE gộp vào pending_fields và dùng chung bộ đếm clarification_round; ba lượt hỏi là giới hạn cho cả yêu cầu, không tính riêng theo từng agent.
-- Còn pending_fields và clarification_round < max_clarification_rounds: Orchestrator tăng clarification_round, gọi LLM soạn pending_questions chỉ cho các trường còn thiếu rồi đặt status = clarifying và chờ. Orchestrator chỉ gửi người dùng các câu trong pending_questions.
+- Agent A trả structured information_requests/recovery; CODE phân loại mục đích theo policy canonical, không gán toàn bộ needs_more_info vào counter TripRequest.
+- Còn pending_fields: CODE soạn và validate câu hỏi; persist identity mới cùng counter đúng nhóm atomically rồi trả user. Retry cùng ID không tăng.
 - Người dùng trả lời: Request Parser (LLM) trích xuất giá trị từ câu trả lời; CODE kiểm tra bằng Pydantic, ghi vào TripRequest với source = user, thêm bản ghi vào answers_history, xóa pending_questions rồi tính lại pending_fields. Giá trị dạng "trong bao lâu" được CODE đổi thành end_date hoặc duration_days.
-- Hết max_clarification_rounds mà vẫn thiếu: CODE áp giá trị mặc định cho các trường còn thiếu, ghi source = default, rồi đi tiếp (đúng quy tắc "hết 3 lần thì xử lý giá trị mặc định" ở mục 2). Trường không có giá trị mặc định hợp lệ thì status = failed kèm thông báo thiếu trường nào.
+- TripRequest hết lượt chỉ dùng defaults cho phép; never-default còn thiếu thì failed. Destination hết lượt áp final resolve/authority trong policy canonical; không chọn theo vị trí array.
 - LLM soạn câu hỏi sai (không qua bước kiểm tra, thử lại hết giới hạn ở mục 10): dùng câu hỏi mẫu cố định theo từng trường thay vì dừng, vì nội dung câu hỏi không ảnh hưởng tính đúng của dữ liệu.
 [BỔ SUNG] Toàn bộ mục 9.2. Phần fields trong pending_questions là bổ sung để CODE biết câu hỏi nào nhắm tới trường nào.
 
@@ -1587,7 +1580,7 @@ Vòng lặp hỏi lại
 | Điều kiện | Hành động | status sau đó |
 | --- | --- | --- |
 | TripRequest hợp lệ, còn pending_fields, clarification_round < max_clarification_rounds | Soạn pending_questions, hỏi người dùng (9.2) | clarifying |
-| Còn pending_fields, đã hết số lượt hỏi | Áp giá trị mặc định (9.2); trường không có mặc định thì dừng | planning hoặc failed |
+| Còn pending_fields, đã hết budget đúng nhóm | Nhận answer của question open trước; áp policy final resolve/authority hoặc defaults TripRequest (9.2) | planning hoặc failed |
 | Hết pending_fields | Chạy Agent A (EXPLICIT thì CODE xác minh điểm đến) | planning |
 | Đã có điểm đến | Chạy Constraint Planner rồi Agent B | planning |
 | Đã có danh sách địa điểm | Chạy Budget Module C để mọi ứng viên có chi phí (kể cả khi budget.amount = null, lúc đó Engine không áp ràng buộc ngân sách) | planning |
@@ -1603,7 +1596,9 @@ Các hàng trên giữ nguyên các quy tắc điều phối ban đầu (thiếu
 
 ### 9.4. Tái sử dụng kết quả
 
-Khi người dùng đổi yêu cầu, Orchestrator chạy lại từ bước đầu tiên có trường đó trong đầu vào và mọi bước phía sau; Planning Input Builder, Planning Engine và Validator luôn chạy lại.
+Failed luôn terminal: explicit destination mới tạo workflow identity và episode mới (lifecycle B), seed TripRequest theo policy canonical. Contracts/persistence là nền tảng; parser, Agent A routing, graph counter và Chat integration còn planned.
+
+Với workflow chưa failed, khi người dùng đổi yêu cầu, Orchestrator chạy lại từ bước đầu tiên có trường đó trong đầu vào và mọi bước phía sau; Planning Input Builder, Planning Engine và Validator luôn chạy lại.
 
 | Người dùng đổi | Chạy lại từ | Giữ lại được |
 | --- | --- | --- |

@@ -70,10 +70,9 @@ No free-text message is interpreted as a routing instruction.
 
 ## State, invalidation and limits
 
-> **Clarification policy (planned, supersedes older prose in this document).**
-> The detailed target policy is [CLARIFICATION_POLICY.md](CLARIFICATION_POLICY.md).
-> Fields/counters marked **planned** below are not all present in the current
-> runtime contract yet; this document does not claim they have been implemented.
+> **Canonical policy:** [CLARIFICATION_POLICY.md](CLARIFICATION_POLICY.md).
+> Contracts and persistence are foundation work; parser, Agent A routing, graph
+> counter fixes and Chat integration remain planned.
 
 `GraphState` contains the structured user input, date, answer, previous parsed
 request and `GraphRun`. `GraphRun` extends the existing Pydantic `WorkflowRun`
@@ -91,12 +90,11 @@ History records invalidated nodes and artifact references before/after updates.
 
 Limits persist across explicit resumes:
 
-- There are two independent clarification counters (**planned**):
-  `clarification_round` / `max_clarification_rounds=3` cover missing
-  `TripRequest` fields and Destination Agent `needs_more_info`.
-  `destination_round` / `max_destination_rounds=2` cover
-  `needs_user_choice` and `no_valid_candidate`. A counter increases only when
-  CODE has a valid non-empty question set and actually sends it to the user.
+- Canonical budgets classify questions by purpose: trip_request uses clarification_round
+  (max 3); destination_info and destination_choice share destination_round (max 2)
+  owned by a destination episode. Count only newly persisted question identities.
+  Retry does not count; the second open question can still be answered. The current
+  graph counter increments on Agent A execution are a known runtime gap to fix next.
 - The deterministic branch order is: if `pending_fields` is empty, invoke
   Destination Agent; if it is non-empty, ask the user while its applicable
   counter remains below its limit, otherwise apply the applicable default/fail
@@ -136,7 +134,10 @@ constraints are never automatically changed.
   policy (**planned**): reset `retry_count`, `clarification_round`, and
   `destination_round` to zero, invalidate affected downstream outputs, and
   write fresh artifact IDs while retaining immutable historical artifacts.
-  Failed runs remain terminal unless a later policy explicitly permits resume.
+  Failed runs are always terminal (lifecycle B). An explicit destination after failure
+  requires both a new workflow request_id and a new destination episode_id.
+  A fresh episode is also required when starting another destination selection after
+  completed; do not reset the budget on an existing episode.
 - Python resume accepts a `GraphRun`, including a JSON-deserialized snapshot.
   `WorkflowPersistence.save_graph/load_graph` stores/restores the application snapshot
   in `workflow_requests.graph_snapshot`. The authenticated mock-run endpoint resumes
