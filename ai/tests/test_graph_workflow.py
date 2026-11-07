@@ -270,6 +270,19 @@ def test_offline_clarification_drafts_do_not_consume_budget():
     assert len(final.answers_history) == 2
 
 
+def test_unknown_destination_remains_pending_without_delegation():
+    from ai.orchestration.request_parser import apply_changes, ParserOutput, Change
+    previous = TripRequest.model_validate(fixture('trip_request'))
+    request = apply_changes(previous, ParserOutput(summary='Unknown destination', changes=[
+        Change(path='destination.city', value_json='null', decision='UNKNOWN')]))
+    result = execute(workflow(), request.model_dump(mode='json'))
+    assert result.state.status == 'clarifying'
+    assert result.pending_questions[0].kind == 'destination_info'
+    assert result.pending_questions[0].fields == ['destination.city']
+    assert result.state.destination_round == result.state.clarification_round == 0
+    assert result.final_result is None
+
+
 def test_user_update_rebuilds_and_keeps_old_artifacts():
     w = workflow(limits=GraphLimits(max_revisions=20))
     first = execute(w)

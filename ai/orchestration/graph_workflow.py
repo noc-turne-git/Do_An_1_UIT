@@ -217,9 +217,12 @@ class LangGraphOrchestrator:
                 value = TypeAdapter(OUTPUTS[STEPS.index(step)]).validate_python(raw, strict=step == "explainer")
                 if step in {"planning_input_builder", "planning_engine", "validator"} and value.trip_id != r.state.trip_id:
                     raise ApplicationError("planning_input_inconsistent", "Trip IDs differ")
-                if step == "request_parser" and value.missing_fields and r.state.clarification_round >= self.limits.max_clarifications:
+                trip_missing = ([path for path in value.missing_fields
+                                if not path.startswith('destination.')]
+                                if step == 'request_parser' else [])
+                if step == "request_parser" and trip_missing and r.state.clarification_round >= self.limits.max_clarifications:
                     data = value.model_dump()
-                    for path in value.missing_fields:
+                    for path in trip_missing:
                         if path in self.clarification_defaults:
                             group, field = path.split(".")
                             data[group][field] = deepcopy(self.clarification_defaults[path])
@@ -284,10 +287,28 @@ class LangGraphOrchestrator:
 
     def _outcome(self, r, step, value):
         sm, o = StateMachine(r), r.outputs
-        if step == "request_parser" and value.missing_fields:
-            StateMachine(r, self.persistence).clarify(value.missing_fields, request=value)
+        if step == "request_parser" and any(
+                not field.startswith('destination.') for field in value.missing_fields):
+            fields = [field for field in value.missing_fields
+                      if not field.startswith('destination.')]
+            StateMachine(r, self.persistence).clarify(fields, request=value)
+        elif (step == 'request_parser' and value.destination.selection_mode == 'explicit'
+              and 'destination.city' in value.missing_fields):
+            from ai.orchestration.clarification_questions import QuestionSpec
+            StateMachine(r, self.persistence).issue_question(
+                QuestionSpec('destination_info', ('destination.city',)), request=value)
         elif step == "destination_agent":
-            if value.selection_status != "selected" or value.missing_fields:
+            destination = o['request_parser'].destination
+            if (value.selection_status == 'selected' and destination.city and
+                    value.selected_region.city != destination.city):
+                raise ValueError('Selected destination differs from user input')
+            if (value.selection_status == 'selected' and not destination.city and
+                    destination.selection_intent in {'USER_UNKNOWN', 'UNKNOWN', 'UNSPECIFIED'}):
+                from ai.orchestration.clarification_questions import QuestionSpec
+                StateMachine(r, self.persistence).issue_question(
+                    QuestionSpec('destination_info', ('destination.city',)),
+                    request=o['request_parser'])
+            elif value.selection_status != "selected" or value.missing_fields:
                 from ai.orchestration.clarification_questions import specifications
                 specs = specifications(value)
                 if not specs:

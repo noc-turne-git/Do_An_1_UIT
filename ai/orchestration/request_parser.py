@@ -72,6 +72,7 @@ def apply_changes(previous, output, *, current_date=None):
     payload = deepcopy(previous.model_dump(mode='json'))
     payload['meta'].setdefault('field_decisions', {})
     date_updates = {}
+    destination_changes = {}
     for change in output.changes:
         parts = change.path.split('.')
         if parts[0] in {'meta', 'missing_fields', 'schema_version'}:
@@ -90,6 +91,8 @@ def apply_changes(previous, output, *, current_date=None):
             date_updates[change.path] = value
         else:
             node[parts[-1]] = value
+        if change.path.startswith('destination.'):
+            destination_changes[change.path] = (change.decision, value)
         payload['meta']['field_decisions'][change.path] = change.decision
         payload['meta']['field_sources'][change.path] = 'user'
         payload['meta']['field_confidences'].pop(change.path, None)
@@ -108,6 +111,37 @@ def apply_changes(previous, output, *, current_date=None):
         payload['meta']['field_sources'][path] = 'inferred'
         payload['meta']['field_confidences'][path] = 1.0
         payload['meta']['field_decisions'][path] = 'SPECIFIED'
+    if destination_changes:
+        city = destination_changes.get('destination.city')
+        mode = destination_changes.get('destination.selection_mode')
+        decisions = {entry[0] for entry in destination_changes.values()}
+        decision = ('AI_DECIDE' if 'AI_DECIDE' in decisions else
+                    'FLEXIBLE' if 'FLEXIBLE' in decisions else
+                    'UNKNOWN' if 'UNKNOWN' in decisions else None)
+        if city and city[0] == 'SPECIFIED' and isinstance(city[1], str) and city[1].strip():
+            payload['destination'].update(selection_intent='EXPLICIT',
+                selection_authority='user', selection_mode='explicit',
+                selection_provenance=dict(source='user', evidence='destination.city=' + city[1]))
+            payload['meta']['field_sources']['destination.selection_mode'] = 'user'
+            payload['meta']['field_decisions']['destination.selection_mode'] = 'SPECIFIED'
+        elif decision in {'UNKNOWN', 'FLEXIBLE', 'AI_DECIDE'}:
+            intent = {'UNKNOWN': 'USER_UNKNOWN', 'FLEXIBLE': 'ANY_DESTINATION',
+                      'AI_DECIDE': 'DELEGATE_SELECTION'}[decision]
+            delegated = decision != 'UNKNOWN'
+            payload['destination'].update(selection_intent=intent,
+                selection_authority='delegated' if delegated else 'none',
+                selection_mode='implicit' if delegated else 'ambiguous',
+                selection_provenance=(dict(source='user', evidence='destination:' + decision)
+                                      if delegated else None), city=None)
+            payload['meta']['field_sources']['destination.selection_mode'] = 'user'
+            payload['meta']['field_decisions']['destination.selection_mode'] = decision
+        elif city and city[1] is None:
+            payload['destination'].update(selection_intent='UNSPECIFIED',
+                selection_authority='none', selection_provenance=None)
+        elif mode and mode[1] == 'implicit':
+            # A parser's choice of resolve mode is not evidence of delegation.
+            payload['destination'].update(selection_intent='UNSPECIFIED',
+                selection_authority='none', selection_provenance=None)
     payload['meta']['parser_status'] = 'clarifying'
     request = TripRequest.model_validate(payload)
     request.meta.parser_status = 'clarifying' if request.missing_fields else 'ready'

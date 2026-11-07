@@ -3,10 +3,9 @@ from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Field, StrictInt
 
-from shared.contracts import Model, NonEmpty, QuestionKind
+from shared.contracts import Model, NonEmpty, QuestionKind, TRIP_NEVER_DEFAULT
 
 
-TRIP_NEVER_DEFAULT = frozenset({'trip.start_date', 'trip.end_date', 'travelers.adults'})
 DESTINATION_NEVER_DEFAULT = frozenset({'destination.city'})  # explicit destination branch
 NEVER_DEFAULT = TRIP_NEVER_DEFAULT | DESTINATION_NEVER_DEFAULT
 PREFERENCE_FIELDS = frozenset({'preferences.interests', 'preferences.pace',

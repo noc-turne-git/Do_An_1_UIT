@@ -64,6 +64,10 @@ def test_any_requires_user_evidence_and_completed_final_resolve():
     episode = DestinationEpisode.model_validate(episode.model_dump() | dict(
         final_resolve_status='completed', final_resolve_id=uuid4(), final_resolve_result=result()))
     assert episode.default_candidate().candidate_id == 'c1'  # not array position zero
+    for intent in ['ANY_DESTINATION', 'DELEGATE_SELECTION']:
+        delegated = DestinationEpisode.model_validate(episode.model_dump() | dict(
+            selection_intent=intent))
+        assert delegated.default_candidate().candidate_id == 'c1'
     for intent in ['UNKNOWN', 'UNSPECIFIED']:
         other = DestinationEpisode.model_validate(episode.model_dump() | dict(
             selection_intent=intent, selection_authority='none', selection_provenance=None))

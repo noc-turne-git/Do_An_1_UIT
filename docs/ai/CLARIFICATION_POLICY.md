@@ -7,9 +7,10 @@ Giữ tên selected_region, question, fields; không đổi tên theo ví dụ m
 
 | selection_intent | Ý nghĩa | selection_authority |
 | --- | --- | --- |
-| EXPLICIT | User chỉ định điểm đến | user |
-| ANY | User chủ động cho phép hệ thống chọn | delegated khi có provenance user |
-| UNKNOWN | User nói chưa biết chọn đâu | none |
+| EXPLICIT | User chỉ định điểm đến cụ thể | user |
+| ANY_DESTINATION | User nói đâu cũng được | delegated khi có provenance user |
+| DELEGATE_SELECTION | User yêu cầu hệ thống chọn giúp | delegated khi có provenance user |
+| USER_UNKNOWN | User nói chưa biết chọn đâu | none |
 | UNSPECIFIED | Chưa có bằng chứng ý định | none |
 
 selection_mode (explicit/implicit/ambiguous) mô tả cách resolve địa danh,
@@ -17,8 +18,10 @@ không phải intent hoặc quyền ủy thác. implicit không suy ra ANY. Mộ
 duy nhất không cấp quyền chọn cho UNKNOWN/UNSPECIFIED. selection_provenance lưu
 source, evidence user và question_id/episode_id nếu quyết định từ câu trả lời.
 Legacy thiếu intent/authority dùng UNSPECIFIED/none, không suy ra từ city hay
-field_sources. User chọn option tạo EXPLICIT/user. Default theo ANY giữ intent
-ANY; DestinationResult.selection_provenance ghi default, không giả thành user chọn.
+field_sources. Giá trị cũ ANY/UNKNOWN vẫn đọc được; parser mới ghi
+ANY_DESTINATION/DELEGATE_SELECTION/USER_UNKNOWN. User chọn option tạo EXPLICIT/user.
+Default theo intent delegated giữ provenance; DestinationResult.selection_provenance
+ghi default, không giả thành user chọn.
 Destination.selection_provenance giữ bằng chứng user đã cấp delegation.
 
 ## Ba question kinds, phân loại theo mục đích
@@ -55,7 +58,8 @@ Sau câu trả lời cuối hoặc đóng question theo hành động tường m
 not_started → claimed → completed cùng result. Restart dùng lại completed result;
 claimed không tự chạy lại nghiệp vụ, cần reconcile theo operation ID.
 
-Chỉ ANY với authority delegated và bằng chứng user mới được default candidate
+Chỉ ANY_DESTINATION hoặc DELEGATE_SELECTION (legacy ANY) với authority delegated
+và bằng chứng user mới được default candidate
 rank=1 sau final resolve completed, khi candidate vẫn hợp lệ. Rank không phải vị
 trí array. UNKNOWN/UNSPECIFIED không default, kể cả chỉ còn một candidate; thiếu
 lựa chọn/ủy quyền thì failed. Không có candidate hợp lệ thì failed. EXPLICIT chỉ
@@ -64,6 +68,10 @@ xác minh nơi user đã chỉ định, không thay bằng nơi khác.
 TripRequest hết lượt chỉ áp defaults đã cấu hình: children=0, preferences theo
 config; budget.amount giữ null nếu chưa biết. start_date/end_date, adults và city
 explicit không default; declared_unknown không bỏ qua các field bắt buộc này.
+Declared unknown ở field TripRequest khác destination được loại khỏi câu hỏi tiếp;
+destination USER_UNKNOWN vẫn chưa resolved và không cấp quyền chọn. Parser chỉ
+trích xuất lựa chọn explicit, Graph sở hữu answer history và counter của episode
+không reset khi user đổi ý trong cùng episode.
 end_date = start_date + duration_days - 1; ngày mơ hồ phải hỏi lại.
 
 ## Lifecycle B và compatibility
@@ -88,6 +96,11 @@ Snapshot cũ đọc được nhờ defaults. Thiếu question identity/episode h
 option candidate ID/rank/reason chỉ được đọc lịch sử, không nhận selection.
 Migration không tự cấp delegation hay biến legacy thành actionable. Issuance mới
 phải dùng budget đã biết, không reset budget legacy để tiếp tục hỏi.
+
+Đề xuất thay hard constraint mang cả `current_values` và `proposed_values` trong
+`constraint_proposal`; LLM chỉ diễn đạt câu hỏi. Draft sai kind, coverage, options
+hoặc proposal dùng template từ snapshot CODE, không gọi LLM viết lại. Chỉ câu hỏi
+đã persist thành công mới tiêu lượt.
 
 ## Mốc triển khai
 

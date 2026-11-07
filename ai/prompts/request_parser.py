@@ -30,6 +30,10 @@ không quan trọng = NO_PREFERENCE; để sau = DEFERRED. Các quyết định 
 Ánh xạ câu trả lời ngắn theo câu hỏi assistant gần nhất; không áp dụng tùy chọn cho mọi trường.
 Nếu người dùng giao chọn điểm đến, đặt destination.selection_mode='implicit' với SPECIFIED,
 và destination.city=null với quyết định tương ứng. Không chọn thành phố thay họ.
+Phân biệt ý định điểm đến: "chưa biết" = UNKNOWN, "đâu cũng được" = FLEXIBLE,
+"bạn chọn giúp" = AI_DECIDE. Nếu vừa chưa biết vừa nhờ chọn, dùng AI_DECIDE
+cho destination.city; chỉ UNKNOWN không cấp quyền chọn. Địa danh cụ thể do user
+nêu phải trích xuất thành destination.city SPECIFIED để CODE kiểm tra tiếp.
 Với người lớn/trẻ em không tự quyết số lượng; giữ null khi chưa có câu trả lời cụ thể.
 Ngày tương đối dựa current_date và timezone được truyền vào. Trích xuất start_date,
 end_date nếu người dùng nêu rõ và duration_days nếu người dùng nêu số ngày; đừng bỏ

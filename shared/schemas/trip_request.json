@@ -259,9 +259,12 @@
           "default": "UNSPECIFIED",
           "enum": [
             "EXPLICIT",
+            "ANY_DESTINATION",
+            "DELEGATE_SELECTION",
+            "USER_UNKNOWN",
+            "UNSPECIFIED",
             "ANY",
-            "UNKNOWN",
-            "UNSPECIFIED"
+            "UNKNOWN"
           ],
           "title": "Selection Intent",
           "type": "string"

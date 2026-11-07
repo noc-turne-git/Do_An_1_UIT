@@ -32,6 +32,8 @@ def test_choice_draft_requires_exact_canonical_options_and_kind():
         assert fallback.question != valid['question']
         assert fallback.options == list(spec.options)
         assert fallback.status == 'legacy' and fallback.question_id is None
+        fallback.options[0].city = 'Changed after fallback'
+        assert spec.options[0].city == 'Hue'
 
 
 def test_destination_info_can_request_non_destination_fields_and_preserve_proposal():

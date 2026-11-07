@@ -37,7 +37,52 @@ def test_complete_missing_and_preserving_corrections():
     assert corrected.travelers.adults == 3 and updated.travelers.adults == 2
 
 
-@pytest.mark.parametrize('decision,missing', [('UNKNOWN', True), ('DEFERRED', True),
+@pytest.mark.parametrize('decision,intent,authority', [
+    ('UNKNOWN', 'USER_UNKNOWN', 'none'),
+    ('FLEXIBLE', 'ANY_DESTINATION', 'delegated'),
+    ('AI_DECIDE', 'DELEGATE_SELECTION', 'delegated'),
+])
+def test_destination_decision_semantics(decision, intent, authority):
+    request = apply_changes(empty_request(), output('destination.city', None, decision))
+    assert request.destination.selection_intent == intent
+    assert request.destination.selection_authority == authority
+    assert request.destination.city is None
+    assert ('destination.city' in request.missing_fields) == (decision == 'UNKNOWN')
+    assert (request.destination.selection_provenance is not None) == (authority == 'delegated')
+
+
+def test_destination_unknown_with_delegation_and_explicit_change():
+    combined = ParserOutput(summary='Đã hiểu.', changes=[
+        Change(path='destination.city', value_json='null', decision='UNKNOWN'),
+        Change(path='destination.selection_mode', value_json='null', decision='AI_DECIDE')])
+    request = apply_changes(empty_request(), combined)
+    assert request.destination.selection_intent == 'DELEGATE_SELECTION'
+    explicit = apply_changes(request, output('destination.city', 'Huế'))
+    assert explicit.destination.selection_intent == 'EXPLICIT'
+    assert explicit.destination.selection_authority == 'user'
+    assert explicit.destination.selection_provenance.source == 'user'
+    assert explicit.meta.field_sources['destination.city'] == 'user'
+    assert explicit.meta.field_decisions['destination.city'] == 'SPECIFIED'
+
+
+def test_legacy_mode_does_not_grant_selection_and_intent_change_keeps_data():
+    legacy = complete()
+    assert legacy.destination.selection_intent == 'UNSPECIFIED'
+    request = apply_changes(legacy, output('destination.selection_mode', 'implicit'))
+    assert request.destination.selection_authority == 'none'
+    changed = apply_changes(request, output('destination.city', None, 'UNKNOWN'))
+    assert changed.destination.selection_intent == 'USER_UNKNOWN'
+    assert changed.destination.selection_authority == 'none'
+
+
+def test_non_destination_unknown_and_never_default_regression():
+    for path in ['budget.amount', 'preferences.pace', 'travelers.children']:
+        assert path not in apply_changes(complete(), output(path, None, 'UNKNOWN')).missing_fields
+    for path in ['trip.start_date', 'trip.end_date', 'travelers.adults']:
+        assert path in apply_changes(complete(), output(path, None, 'UNKNOWN')).missing_fields
+
+
+@pytest.mark.parametrize('decision,missing', [('UNKNOWN', False), ('DEFERRED', True),
     ('FLEXIBLE', False), ('AI_DECIDE', False), ('NO_PREFERENCE', False)])
 def test_decision_roundtrip_and_essential_travelers(decision, missing):
     request = apply_changes(complete(), output('preferences.pace', None, decision))
@@ -108,7 +153,8 @@ def test_relative_date_result_and_grouped_questions():
                                           dict(kind='final', output=response.model_dump()))
     assert not error and request.trip.start_date == tomorrow and request.trip.duration_days == 3
     assert reply.count('bao nhiêu') == 1
-    assert reply == 'Nhóm có bao nhiêu người lớn và trẻ em?'
+    assert 'người lớn' in reply
+    assert 'travelers.children' not in request.missing_fields
 
 
 def test_harness_keeps_new_explicit_end_date_and_recomputes_duration():

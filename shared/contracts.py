@@ -26,11 +26,13 @@ class Contract(Model):
     schema_version: str = Field(default="1.0", pattern=r"^1\.\d+$")
 
 
-SelectionIntent = Literal["EXPLICIT", "ANY", "UNKNOWN", "UNSPECIFIED"]
+SelectionIntent = Literal["EXPLICIT", "ANY_DESTINATION", "DELEGATE_SELECTION",
+                          "USER_UNKNOWN", "UNSPECIFIED", "ANY", "UNKNOWN"]
 SelectionAuthority = Literal["none", "user", "delegated"]
 QuestionKind = Literal["trip_request", "destination_info", "destination_choice"]
 PositiveInt = Annotated[StrictInt, Field(gt=0)]
 NonEmpty = Annotated[str, Field(min_length=1, pattern=r"\S")]
+TRIP_NEVER_DEFAULT = frozenset({'trip.start_date', 'trip.end_date', 'travelers.adults'})
 
 
 class SelectionProvenance(Model):
@@ -54,8 +56,9 @@ class SelectionPolicy(Model):
     @model_validator(mode="after")
     def authority_is_explicit(self):
         if self.selection_authority != "none":
-            required = "ANY" if self.selection_authority == "delegated" else "EXPLICIT"
-            if self.selection_intent != required:
+            allowed = ({"ANY", "ANY_DESTINATION", "DELEGATE_SELECTION"}
+                       if self.selection_authority == "delegated" else {"EXPLICIT"})
+            if self.selection_intent not in allowed:
                 raise ValueError("selection authority conflicts with intent")
             if self.selection_provenance is None or self.selection_provenance.source != "user":
                 raise ValueError("selection authority requires user provenance")
@@ -219,16 +222,18 @@ class TripRequest(Contract):
         }
         if self.destination.selection_mode == "explicit":
             required["destination.city"] = self.destination.city
+        elif self.destination.selection_intent in {'USER_UNKNOWN', 'UNKNOWN'}:
+            required['destination.city'] = self.destination.city
+        unresolved = lambda value: value is None or (isinstance(value, str) and not value.strip())
         self.missing_fields = [path for path, value in required.items()
-                               if value is None and self.meta.field_sources.get(path) != "user"]
-        if self.meta.parser_status is not None:
-            essential = {'travelers.adults', 'travelers.children'}
-            self.missing_fields = [path for path, value in required.items()
-                if (value is None or (isinstance(value, str) and not value.strip()))
-                and (path in essential or self.meta.field_decisions.get(path)
-                     not in {'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE'})]
-            if self.travelers.adults == 0 and self.travelers.children == 0:
-                self.missing_fields.append('travelers.adults')
+            if unresolved(value) and (path.startswith('destination.') or
+                path in TRIP_NEVER_DEFAULT or self.meta.field_decisions.get(path)
+                not in {'UNKNOWN', 'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE'} and
+                not (self.meta.parser_status is None and
+                     self.meta.field_sources.get(path) == 'user' and
+                     path not in self.meta.field_decisions))]
+        if self.travelers.adults == 0 and self.travelers.children == 0:
+            self.missing_fields.append('travelers.adults')
         return self
 
 
@@ -886,7 +891,7 @@ class DestinationEpisode(SelectionPolicy):
         """A permission gate, not an orchestration side effect."""
         self.consistent()
         self.authority_is_explicit()
-        if self.status == 'failed' or self.selection_intent != "ANY" or self.selection_authority != "delegated" or self.final_resolve_status != "completed":
+        if self.status == 'failed' or self.selection_intent not in {"ANY", "ANY_DESTINATION", "DELEGATE_SELECTION"} or self.selection_authority != "delegated" or self.final_resolve_status != "completed":
             raise ValueError("default requires delegated ANY after final resolve")
         candidates = self.final_resolve_result.candidate_regions
         ranked = [c for c in candidates if c.rank == 1 and c.candidate_id and c.reason.strip()]
