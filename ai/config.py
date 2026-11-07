@@ -26,8 +26,7 @@ class AISettings(BaseSettings):
     llm_timeout_seconds: float = Field(default=30, gt=0)
 
     def build_clarification_policy(self) -> ClarificationPolicy:
-        # Revalidate and detach configuration, including nested values. This is
-        # deliberately not passed to the legacy graph's default-applying branch.
+        # Revalidate and detach configuration, including nested values.
         return ClarificationPolicy.model_validate(dict(
             max_clarification_rounds=self.graph_max_clarifications,
             max_destination_rounds=self.max_destination_rounds,

@@ -13,13 +13,15 @@ def get_clarification_policy(settings) -> ClarificationPolicy:
     return settings.build_clarification_policy()
 
 
-def build_orchestrator(settings):
+def build_orchestrator(settings, *, persistence=None, clarification_policy=None):
+    policy = clarification_policy or get_clarification_policy(settings)
     if settings.agent_runtime_enabled:
         from ai.agents.adapters.mock import runtime_mock_components
         components = runtime_mock_components()
     else:
         components = mock_components()
     return LangGraphOrchestrator(components, defaults=fixture('planner_defaults'),
+        clarification_policy=policy, persistence=persistence,
         limits=GraphLimits(**{name: getattr(settings, 'graph_' + name)
             for name in GraphLimits.model_fields}))
 

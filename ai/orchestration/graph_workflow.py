@@ -21,6 +21,9 @@ from ai.agents.runtime.context import execution_identity
 from shared.contracts import AnswerHistory, Attempt, Model, TripRequest, WorkflowState
 from ai.planning.constraint_planner import ConstraintPlanningError
 from ai.orchestration.workflow_state import OUTPUTS, REFS, STEPS, StateMachine, WorkflowRun
+from ai.orchestration.clarification_policy import ClarificationPolicy
+from ai.orchestration.clarification_questions import QuestionSpec
+from ai.orchestration.trip_request_defaults import apply_trip_defaults
 
 
 class DataRequirement(Exception):
@@ -60,6 +63,8 @@ class GraphRun(WorkflowRun):
     candidate_limit: int = 100
     stop_reason: str | None = None
     limits: GraphLimits | None = None
+    trip_request_fields: list[str] = Field(default_factory=list)
+    destination_info_fields: list[str] = Field(default_factory=list)
 
     @field_validator("outputs", mode="before")
     @classmethod
@@ -79,12 +84,17 @@ class GraphState(TypedDict):
 
 class LangGraphOrchestrator:
     def __init__(self, components, *, defaults, configuration=None, limits=None,
-                 clarification_defaults=None, persistence=None):
+                 clarification_defaults=None, clarification_policy=None, persistence=None):
         self.persistence = persistence
         self.components = components
         self.defaults = deepcopy(defaults)
         self.configuration = deepcopy(configuration or {})
         self.limits = limits or GraphLimits()
+        self.clarification_policy = clarification_policy or ClarificationPolicy(
+            max_clarification_rounds=self.limits.max_clarifications)
+        self.limits = self.limits.model_copy(update={
+            'max_clarifications': self.clarification_policy.max_clarification_rounds})
+        # Retained for old callers; arbitrary maps are never applied as policy.
         self.clarification_defaults = deepcopy(clarification_defaults or {})
         builder = StateGraph(GraphState)
         for step in STEPS:
@@ -217,17 +227,15 @@ class LangGraphOrchestrator:
                 value = TypeAdapter(OUTPUTS[STEPS.index(step)]).validate_python(raw, strict=step == "explainer")
                 if step in {"planning_input_builder", "planning_engine", "validator"} and value.trip_id != r.state.trip_id:
                     raise ApplicationError("planning_input_inconsistent", "Trip IDs differ")
-                trip_missing = ([path for path in value.missing_fields
-                                if not path.startswith('destination.')]
-                                if step == 'request_parser' else [])
-                if step == "request_parser" and trip_missing and r.state.clarification_round >= self.limits.max_clarifications:
-                    data = value.model_dump()
-                    for path in trip_missing:
-                        if path in self.clarification_defaults:
-                            group, field = path.split(".")
-                            data[group][field] = deepcopy(self.clarification_defaults[path])
-                            data["meta"]["field_sources"][path] = "default"
-                    value = TripRequest.model_validate(data)
+                if step == 'request_parser':
+                    fields = list(dict.fromkeys([*r.trip_request_fields,
+                        *(p for p in value.missing_fields if not p.startswith('destination.')
+                          and p not in r.destination_info_fields)]))
+                    if fields:
+                        value = apply_trip_defaults(value, [QuestionSpec('trip_request', tuple(fields))],
+                            policy=self.clarification_policy,
+                            exhausted=r.state.clarification_round >= r.state.max_clarification_rounds,
+                            question_open=any(q.status == 'open' for q in r.pending_questions))
                 self._save(r, step, value)
                 self._outcome(r, step, value)
                 event["refs_after"] = r.state.artifacts.model_dump(mode="json")
@@ -288,9 +296,11 @@ class LangGraphOrchestrator:
     def _outcome(self, r, step, value):
         sm, o = StateMachine(r), r.outputs
         if step == "request_parser" and any(
-                not field.startswith('destination.') for field in value.missing_fields):
+                not field.startswith('destination.') and field not in r.destination_info_fields
+                for field in value.missing_fields):
             fields = [field for field in value.missing_fields
-                      if not field.startswith('destination.')]
+                      if not field.startswith('destination.') and field not in r.destination_info_fields]
+            r.trip_request_fields = list(dict.fromkeys([*r.trip_request_fields, *fields]))
             StateMachine(r, self.persistence).clarify(fields, request=value)
         elif (step == 'request_parser' and value.destination.selection_mode == 'explicit'
               and 'destination.city' in value.missing_fields):
@@ -315,6 +325,10 @@ class LangGraphOrchestrator:
                     raise ValueError('Destination result has no structured question purpose')
                 StateMachine(r, self.persistence).issue_question(
                     specs[0], request=o['request_parser'])
+                if specs[0].kind == 'trip_request':
+                    r.trip_request_fields = list(dict.fromkeys([*r.trip_request_fields, *specs[0].fields]))
+                elif specs[0].kind == 'destination_info':
+                    r.destination_info_fields = list(dict.fromkeys([*r.destination_info_fields, *specs[0].fields]))
         elif step == "place_agent":
             names = {p.place_id for p in value} | {p.name for p in value}
             if not value or not set(o["request_parser"].destination.must_visit) <= names:
@@ -369,7 +383,9 @@ class LangGraphOrchestrator:
         r = previous.model_copy(deep=True) if previous else GraphRun(state=WorkflowState(
             request_id=request_id or uuid4(), trip_id=trip_id or uuid4(), status="parsing",
             current_step="request_parser", completed_steps=[], artifacts={}, clarification_round=0,
-            max_clarification_rounds=self.limits.max_clarifications, pending_fields=[], retry_count=0))
+            max_clarification_rounds=self.clarification_policy.max_clarification_rounds,
+            max_destination_rounds=self.clarification_policy.max_destination_rounds,
+            pending_fields=[], retry_count=0))
         if previous and previous.limits:
             self.limits = previous.limits.model_copy(deep=True)
         r.limits = self.limits.model_copy(deep=True)

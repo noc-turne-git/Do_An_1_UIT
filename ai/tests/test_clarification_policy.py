@@ -97,7 +97,7 @@ def test_deep_copy_isolation_and_frozen_policy():
     assert policy.preference_defaults.interests == ('history',)
 
 
-def test_backend_env_inheritance_and_runtime_not_applied(monkeypatch):
+def test_backend_env_inheritance_and_production_factory_wiring(monkeypatch):
     import json
     from app.core.config import Settings
     monkeypatch.setenv('GRAPH_MAX_CLARIFICATIONS', '4')
@@ -108,7 +108,11 @@ def test_backend_env_inheritance_and_runtime_not_applied(monkeypatch):
     assert policy.max_clarification_rounds == 4
     assert policy.default_table['preferences.pace'] == 'slow'
     graph = build_orchestrator(settings)
-    assert graph.clarification_defaults == {}  # no new default application/routing
+    assert graph.clarification_policy == policy
+    assert graph.limits.max_clarifications == policy.max_clarification_rounds
+    for runtime in (False, True):
+        settings.agent_runtime_enabled = runtime
+        assert build_orchestrator(settings, clarification_policy=policy).clarification_policy is policy
     monkeypatch.setenv('MAX_DESTINATION_ROUNDS', '3')
     with pytest.raises(ValidationError):
         Settings(_env_file=None)

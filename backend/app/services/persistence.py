@@ -34,6 +34,9 @@ class WorkflowPersistence(OwnedRepository):
         repo = ClarificationRepository(self.session, self.user_id)
         with self.session.begin_nested():
             request = self.request(run.state.request_id, lock=True)
+            if request.active_episode_id is None:
+                # The graph factory owns the configured limits for a new run.
+                RequestRepository(self.session, self.user_id).update_projection(run.state)
             episode = (repo.contract(repo.episode(request.request_id))
                        if request.active_episode_id else repo.start_episode(
                            request.request_id, SelectionPolicy.model_validate(
