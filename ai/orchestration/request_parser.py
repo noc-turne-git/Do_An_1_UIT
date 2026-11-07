@@ -9,6 +9,7 @@ from pydantic import Field, ValidationError
 from shared.contracts import Model, TripRequest
 from ai.agents.contracts import AgentContext, AgentDefinition, AgentStatus, ExecutionLimits
 from ai.agents.runtime.factory import create_agent_harness
+from ai.orchestration.date_normalization import DATE_PATHS, normalize_trip_dates
 
 DECISIONS = Literal['UNKNOWN', 'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE', 'DEFERRED', 'SPECIFIED']
 LABELS = {
@@ -67,9 +68,10 @@ from ai.prompts.request_parser import PROMPT
 
 
 
-def apply_changes(previous, output):
+def apply_changes(previous, output, *, current_date=None):
     payload = deepcopy(previous.model_dump(mode='json'))
     payload['meta'].setdefault('field_decisions', {})
+    date_updates = {}
     for change in output.changes:
         parts = change.path.split('.')
         if parts[0] in {'meta', 'missing_fields', 'schema_version'}:
@@ -84,10 +86,28 @@ def apply_changes(previous, output):
         value = json.loads(change.value_json)
         if change.decision != 'SPECIFIED' and value is not None:
             raise ValueError('Undecided fields cannot contain invented values')
-        node[parts[-1]] = value
+        if change.path in DATE_PATHS:
+            date_updates[change.path] = value
+        else:
+            node[parts[-1]] = value
         payload['meta']['field_decisions'][change.path] = change.decision
         payload['meta']['field_sources'][change.path] = 'user'
         payload['meta']['field_confidences'].pop(change.path, None)
+    normalized = normalize_trip_dates(previous, date_updates, current_date=current_date)
+    if normalized.conflicting:
+        raise ValidationError.from_exception_data('TripRequest', [{
+            'type': 'value_error', 'loc': ('trip',), 'input': payload['trip'],
+            'ctx': {'error': ValueError('; '.join(issue.detail for issue in normalized.issues
+                                                  if issue.reason == 'conflicting'))}}])
+    payload['trip'].update(normalized.trip_fields())
+    for issue in normalized.issues:
+        if issue.reason == 'ambiguous':
+            for path in issue.fields:
+                payload['meta']['field_decisions'][path] = 'UNKNOWN'
+    for path in normalized.derived_fields:
+        payload['meta']['field_sources'][path] = 'inferred'
+        payload['meta']['field_confidences'][path] = 1.0
+        payload['meta']['field_decisions'][path] = 'SPECIFIED'
     payload['meta']['parser_status'] = 'clarifying'
     request = TripRequest.model_validate(payload)
     request.meta.parser_status = 'clarifying' if request.missing_fields else 'ready'
@@ -95,6 +115,8 @@ def apply_changes(previous, output):
 
 
 async def parse_turn(settings, *, previous, content, history, request_id, conversation_id):
+    timezone_name = previous.trip.timezone or 'Asia/Ho_Chi_Minh'
+    user_date = datetime.now(ZoneInfo(timezone_name)).date()
     definition = AgentDefinition(name='chat_request_parser', description='Travelio conversation, travel advice and trip requirements',
         system_prompt=PROMPT, output_schema=ParserOutput,
         limits=ExecutionLimits(max_steps=1, max_tool_calls=0, max_retries=1,
@@ -105,8 +127,8 @@ async def parse_turn(settings, *, previous, content, history, request_id, conver
             conversation_id=conversation_id, input_data=dict(content=content, history=history,
                 previous_request=previous.model_dump(mode='json'),
                 trip_request_schema=TripRequest.model_json_schema(),
-                current_date=datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).date().isoformat(),
-                timezone='Asia/Ho_Chi_Minh')))
+                current_date=user_date.isoformat(),
+                timezone=timezone_name)))
         if result.status != AgentStatus.SUCCESS:
             return None, None, result.error.code if result.error else 'INVALID_PARSER_OUTPUT'
         if result.output.intent != 'trip_planning':
@@ -116,7 +138,7 @@ async def parse_turn(settings, *, previous, content, history, request_id, conver
         if result.output.conflicting_input:
             return None, None, 'CONFLICTING_INPUT'
         try:
-            request = apply_changes(previous, result.output)
+            request = apply_changes(previous, result.output, current_date=user_date)
         except json.JSONDecodeError:
             return None, None, 'INVALID_PARSER_JSON'
         except ValidationError:

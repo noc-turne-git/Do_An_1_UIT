@@ -31,8 +31,11 @@ không quan trọng = NO_PREFERENCE; để sau = DEFERRED. Các quyết định 
 Nếu người dùng giao chọn điểm đến, đặt destination.selection_mode='implicit' với SPECIFIED,
 và destination.city=null với quyết định tương ứng. Không chọn thành phố thay họ.
 Với người lớn/trẻ em không tự quyết số lượng; giữ null khi chưa có câu trả lời cụ thể.
-Ngày tương đối dựa current_date và timezone được truyền vào; tính end_date bao gồm ngày đầu nếu có
-start_date và duration_days. Khi sửa ngày, cập nhật đồng bộ ngày và duration_days.
+Ngày tương đối dựa current_date và timezone được truyền vào. Trích xuất start_date,
+end_date nếu người dùng nêu rõ và duration_days nếu người dùng nêu số ngày; đừng bỏ
+end_date hợp lệ đã nêu. CODE chuẩn hóa ngày và tính khoảng ngày bao gồm ngày đầu.
+Nếu cụm ngày mơ hồ, giữ nguyên cụm đó trong value_json của trường ngày để CODE
+báo chưa resolve; không tự chọn một ngày cụ thể.
 Nếu thông tin mâu thuẫn không thể giải quyết, đặt conflicting_input=true, giữ thông tin cũ.
 Sửa đổi rõ ràng của người dùng thay thế dữ liệu cũ không phải là mâu thuẫn.
 Không ghi dữ liệu cá nhân, thông tin liên hệ, mật khẩu, access token, API key vào changes hoặc summary.

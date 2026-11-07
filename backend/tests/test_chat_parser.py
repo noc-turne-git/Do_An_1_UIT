@@ -111,6 +111,17 @@ def test_relative_date_result_and_grouped_questions():
     assert reply == 'Nhóm có bao nhiêu người lớn và trẻ em?'
 
 
+def test_harness_keeps_new_explicit_end_date_and_recomputes_duration():
+    response = output('trip.end_date', '2026-11-18')
+    (request, _, error), adapter = run_script('Đi đến ngày 18/11',
+                                            dict(kind='final', output=response.model_dump()))
+    assert error is None
+    assert request.trip.end_date.isoformat() == '2026-11-18'
+    assert request.trip.duration_days == 5
+    assert request.meta.field_sources['trip.end_date'] == 'user'
+    assert adapter.requests[0].messages[-1]['content']['current_date']
+
+
 def test_ready_request_keeps_confirmation_without_followup():
     response = ParserOutput(summary='Đã đủ thông tin chuyến đi.', changes=[],
         questions=[dict(fields=['travelers.adults'], question='Có bao nhiêu người lớn?')])
