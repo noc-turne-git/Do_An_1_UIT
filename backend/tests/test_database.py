@@ -520,6 +520,47 @@ def test_canonical_roundtrip_restart_and_shared_budget(database, kinds):
 
 
 @pytest.mark.postgres
+def test_workflow_issue_transition_persists_single_identity_and_budget(database):
+    from canonical_cases import start, answer
+    from ai.orchestration.clarification_questions import QuestionSpec
+    from ai.orchestration.workflow_state import StateMachine
+    from app.repositories.clarifications import ClarificationRepository
+    from shared.contracts import QuestionOption
+
+    user, _, request, _ = start(database, seed)
+    source = TripRequest.model_validate(fixture('trip_request'))
+    identifier = uuid4()
+    with database.sessions.begin() as session:
+        persistence = WorkflowPersistence(session, user)
+        run = persistence.load_graph(request)
+        spec = QuestionSpec('destination_info', ('budget.amount',))
+        issued = StateMachine(run, persistence).issue_question(
+            spec, request=source, question_id=identifier)
+        assert issued.question_id == identifier and issued.round == 1
+        assert run.state.destination_round == 1 and run.state.clarification_round == 0
+        assert persistence.load_graph(request).pending_questions == [issued]
+        retry = StateMachine(run, persistence).issue_question(
+            spec, request=source, question_id=identifier)
+        assert retry == issued and run.state.destination_round == 1
+        with pytest.raises(ApplicationError):
+            StateMachine(run, persistence).issue_question(spec, request=source)
+        ClarificationRepository(session, user).answer(request, answer(issued))
+        second_run = persistence.load_graph(request)
+        choice = QuestionSpec('destination_choice', ('destination.city',), (
+            QuestionOption(option_id='o1', candidate_id='c1', city='Hue',
+                           rank=1, reason='History'),))
+        second = StateMachine(second_run, persistence).issue_question(choice, request=source)
+        assert second.round == 2 and second_run.state.destination_round == 2
+        assert persistence.load_graph(request).pending_questions == [second]
+        with pytest.raises(ApplicationError):
+            StateMachine(second_run, persistence).issue_question(choice, request=source)
+    with database.sessions.begin() as session:
+        persistence = WorkflowPersistence(session, user)
+        run = persistence.load_graph(request)
+        assert run.state.destination_round == 2 and run.pending_questions[0].round == 2
+
+
+@pytest.mark.postgres
 def test_canonical_stale_cross_episode_owner_and_rollback(database):
     from canonical_cases import start, question, answer
     from app.repositories.clarifications import ClarificationRepository

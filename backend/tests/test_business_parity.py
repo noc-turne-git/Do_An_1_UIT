@@ -87,6 +87,25 @@ def test_identical_fixtures_preserve_complete_business_payloads(scenario):
                 adapter.validate_python(expected['payloads'][ref]), mode='json')
     expected['questions'] = [PendingQuestion.model_validate(q).model_dump(mode='json') for q in expected['questions']]
     expected['answers'] = [AnswerHistory.model_validate(a).model_dump(mode='json') for a in expected['answers']]
+    # The canonical issuance transition leaves offline drafts uncounted. The
+    # frozen business artifacts remain compared in full below.
+    expected['clarification_round'] = expected['destination_round'] = 0
+    if scenario == 'missing':
+        expected['questions'] = [PendingQuestion(
+            question='Vui lòng cho biết: budget.amount.',
+            fields=['budget.amount']).model_dump(mode='json')]
+    if scenario == 'destination':
+        options = [dict(option_id=f'mock-{index}', candidate_id=f'mock-{index}',
+                        city=city, rank=index, reason='Mock choice')
+                   for index, city in enumerate(['Da Lat', 'Nha Trang'], 1)]
+        expected['questions'] = [PendingQuestion(
+            question='Bạn muốn chọn điểm đến nào trong các lựa chọn này?',
+            fields=['destination.city'], kind='destination_choice',
+            options=options).model_dump(mode='json')]
+        for candidate, option in zip(expected['payloads']['destination_result_id']['candidate_regions'], options):
+            candidate['candidate_id'], candidate['rank'] = option['candidate_id'], option['rank']
+    if scenario in {'resume', 'unknown'}:
+        expected['answers'][0]['question'] = 'Vui lòng cho biết: budget.amount.'
     assert json.loads(json.dumps(payload)) == expected
     expected_status = ('clarifying' if scenario in {'missing', 'destination'} else 'completed')
     assert payload['status'] == expected_status

@@ -247,6 +247,7 @@ class CandidateRegion(Region):
 class ConstraintProposal(Model):
     proposal_id: NonEmpty
     fields: Annotated[list[NonEmpty], Field(min_length=1)]
+    current_values: dict[str, object] | None = None
     proposed_values: dict[str, object]
     reason: NonEmpty
 
@@ -254,6 +255,8 @@ class ConstraintProposal(Model):
     def proposal_fields(self):
         if set(self.fields) != set(self.proposed_values) or len(self.fields) != len(set(self.fields)):
             raise ValueError("proposal values must match unique fields")
+        if self.current_values is not None and set(self.fields) != set(self.current_values):
+            raise ValueError('current constraint values must match proposal fields')
         return self
 
 

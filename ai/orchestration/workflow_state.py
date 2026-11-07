@@ -62,14 +62,34 @@ class StateMachine:
                         "solver_error" if step == "planning_engine" else "planning_input_inconsistent"),
                         message=f"[{code}] {message}", retryable=retryable)])
 
-    def clarify(self, fields):
-        fields = list(dict.fromkeys(fields))
+    def issue_question(self, spec, *, request=None, draft=None, question_id=None):
+        """The sole workflow transition that can consume a clarification slot."""
+        from ai.orchestration.clarification_questions import prepare_question
+
+        question = prepare_question(spec, draft=draft)
+        if self.persistence is not None:
+            if request is None:
+                raise ValueError('Issuance requires the current TripRequest')
+            issued, episode, clarification_round = self.persistence.issue_question(
+                self.run, question, request, question_id=question_id)
+            self.update(status='clarifying', pending_fields=issued.fields,
+                pending_questions=[issued], destination_episode=episode,
+                destination_round=episode.destination_round,
+                clarification_round=clarification_round)
+            return issued
+        # A draft assembled in memory has no issued identity or budget effect.
+        self.update(status='clarifying', pending_fields=question.fields,
+                    pending_questions=[question])
+        return question
+
+    def clarify(self, fields, *, request=None):
+        from ai.orchestration.clarification_questions import QuestionSpec
+
+        fields = tuple(dict.fromkeys(fields))
         if self.run.state.clarification_round >= self.run.state.max_clarification_rounds:
-            self.fail(self.run.state.current_step, "missing_required_fields",
-                      "No configured default for: " + ", ".join(fields))
+            self.fail(self.run.state.current_step, 'missing_required_fields',
+                      'No configured default for: ' + ', '.join(fields))
             return
-        self.update(status="clarifying", pending_fields=fields,
-                    pending_questions=[dict(question=f"Vui lòng cung cấp {f}.", fields=[f]) for f in fields],
-                    clarification_round=self.run.state.clarification_round + 1)
+        return self.issue_question(QuestionSpec('trip_request', fields), request=request)
 
 

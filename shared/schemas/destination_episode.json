@@ -89,6 +89,19 @@
           "title": "Fields",
           "type": "array"
         },
+        "current_values": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current Values"
+        },
         "proposed_values": {
           "additionalProperties": true,
           "title": "Proposed Values",

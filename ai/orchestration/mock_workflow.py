@@ -32,7 +32,9 @@ class MockDestinationAgent:
             if len(cities) >= 2:
                 result.update(request_type="AMBIGUOUS", selected_region=None,
                               selection_status="needs_user_choice",
-                              candidate_regions=[dict(city=c, reason="Mock choice") for c in cities])
+                              candidate_regions=[dict(city=c, reason="Mock choice",
+                                  candidate_id=f'mock-{index}', rank=index)
+                                  for index, c in enumerate(cities, 1)])
         elif request.destination.selection_mode == "explicit" and request.destination.city != result["selected_region"]["city"]:
             raise ApplicationError("mock_fixture_unsupported", "Mock catalog supports only the fixture destination")
         return DestinationResult.model_validate(result)

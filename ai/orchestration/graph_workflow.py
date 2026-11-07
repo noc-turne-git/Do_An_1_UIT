@@ -242,7 +242,8 @@ class LangGraphOrchestrator:
                     event["requirement"] = dict(provider=exc.provider, reason=exc.reason)
             except ConstraintPlanningError as exc:
                 if exc.pending_fields and all(i.code == "missing_required_field" for i in exc.issues):
-                    sm.clarify(exc.pending_fields)
+                    StateMachine(r, self.persistence).clarify(
+                        exc.pending_fields, request=r.outputs.get('request_parser'))
                 else:
                     sm.fail(step, exc.code, exc.message)
             except Exception as exc:
@@ -284,11 +285,15 @@ class LangGraphOrchestrator:
     def _outcome(self, r, step, value):
         sm, o = StateMachine(r), r.outputs
         if step == "request_parser" and value.missing_fields:
-            sm.clarify(value.missing_fields)
+            StateMachine(r, self.persistence).clarify(value.missing_fields, request=value)
         elif step == "destination_agent":
-            sm.update(destination_round=r.state.destination_round + 1)
             if value.selection_status != "selected" or value.missing_fields:
-                sm.clarify(value.missing_fields or ["destination.city"])
+                from ai.orchestration.clarification_questions import specifications
+                specs = specifications(value)
+                if not specs:
+                    raise ValueError('Destination result has no structured question purpose')
+                StateMachine(r, self.persistence).issue_question(
+                    specs[0], request=o['request_parser'])
         elif step == "place_agent":
             names = {p.place_id for p in value} | {p.name for p in value}
             if not value or not set(o["request_parser"].destination.must_visit) <= names:
@@ -324,7 +329,8 @@ class LangGraphOrchestrator:
                 if o["planning_engine"].relaxation_suggestions:
                     sm.update(status="awaiting_relaxation")
                 else:
-                    sm.clarify(["additional_constraints"])
+                    StateMachine(r, self.persistence).clarify(
+                        ["additional_constraints"], request=o['request_parser'])
             elif value.suggested_action == "fail":
                 sm.fail(step, "validation_rejected", "Validator rejected itinerary")
             elif value.suggested_action == "replan":
@@ -364,9 +370,28 @@ class LangGraphOrchestrator:
                         data["meta"]["field_sources"][path] = "user"
                         (resolved if node is not None else unknown).append(path)
                 request = TripRequest.model_validate(data)
-                r.answers_history.append(AnswerHistory(round=r.state.clarification_round,
-                    asked_fields=previous.state.pending_fields, question=" ".join(q.question for q in previous.pending_questions),
-                    answer_raw=answer_raw, resolved_fields=resolved, declared_unknown_fields=unknown))
+                question = next((q for q in previous.pending_questions if q.status == 'open'), None)
+                if question is not None:
+                    selected = (answer_raw.strip() if question.kind == 'destination_choice'
+                                and answer_raw.strip() in {o.option_id for o in question.options}
+                                else None)
+                    if question.kind == 'destination_choice' and selected is None:
+                        return previous.model_copy(deep=True)
+                    answer = AnswerHistory(round=question.round, kind=question.kind,
+                        asked_fields=question.fields, question=question.question,
+                        answer_raw=answer_raw, resolved_fields=resolved,
+                        declared_unknown_fields=unknown, answer_id=uuid4(),
+                        episode_id=question.episode_id, question_id=question.question_id,
+                        selected_option_id=selected)
+                    if self.persistence:
+                        self.persistence.answer_question(r, answer)
+                    r.answers_history.append(answer)
+                elif previous.pending_questions:
+                    r.answers_history.append(AnswerHistory(round=r.state.clarification_round or 1,
+                        asked_fields=previous.state.pending_fields,
+                        question=' '.join(q.question for q in previous.pending_questions),
+                        answer_raw=answer_raw, resolved_fields=resolved,
+                        declared_unknown_fields=unknown))
             # Parser owns changed user input; downstream artifacts are invalidated at entry.
             r.route_provider, r.route_reason = "request_parser", "user_update"
             r.final_result = None

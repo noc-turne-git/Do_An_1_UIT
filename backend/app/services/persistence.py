@@ -15,6 +15,54 @@ TYPES = dict(request_parser='trip_request', destination_agent='destination_resul
 
 
 class WorkflowPersistence(OwnedRepository):
+    def answer_question(self, run, answer):
+        from app.repositories.clarifications import ClarificationRepository
+        stored = ClarificationRepository(self.session, self.user_id).answer(
+            run.state.request_id, answer)
+        return stored
+
+    def issue_question(self, run, draft, trip_request, *, question_id=None):
+        """Bind identity and persist issuance in one transaction.
+
+        The repository row lock and trigger serialize competing issuers. Delivery
+        retries reuse the open question ID; a new ID is never minted for them.
+        """
+        from ai.orchestration.clarification_questions import attach_identity
+        from app.repositories.clarifications import ClarificationRepository, conflict
+        from shared.contracts import SelectionPolicy
+
+        repo = ClarificationRepository(self.session, self.user_id)
+        with self.session.begin_nested():
+            request = self.request(run.state.request_id, lock=True)
+            episode = (repo.contract(repo.episode(request.request_id))
+                       if request.active_episode_id else repo.start_episode(
+                           request.request_id, SelectionPolicy.model_validate(
+                               trip_request.destination.model_dump(
+                                   include=set(SelectionPolicy.model_fields)))))
+            open_questions = repo.questions(request.request_id, open_only=True)
+            if open_questions:
+                existing = open_questions[0]
+                if question_id is not None and existing.question_id == question_id and (
+                        existing.question, existing.fields, existing.kind, existing.options,
+                        existing.constraint_proposal) == (
+                        draft.question, draft.fields, draft.kind, draft.options,
+                        draft.constraint_proposal):
+                    return existing, episode, request.clarification_round
+                conflict('An issued question is still open')
+            counter = (episode.destination_round if draft.counter_group == 'destination'
+                       else request.clarification_round)
+            maximum = (episode.max_destination_rounds if draft.counter_group == 'destination'
+                       else request.max_clarification_rounds)
+            if counter >= maximum:
+                conflict('Question budget exhausted')
+            issued = attach_identity(draft, question_id=question_id or uuid4(),
+                episode_id=episode.episode_id, intent_snapshot=episode.selection_intent,
+                round=counter + 1)
+            issued = repo.issue(request.request_id, issued)
+            episode = repo.contract(repo.episode(request.request_id))
+            self.session.refresh(request)
+            return issued, episode, request.clarification_round
+
     def save_graph(self, run):
         row = self.request(run.state.request_id, lock=True)
         if row.trip_id != run.state.trip_id or row.status != run.state.status:

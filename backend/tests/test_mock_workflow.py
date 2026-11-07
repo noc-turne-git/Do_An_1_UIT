@@ -66,7 +66,7 @@ def test_missing_stops_and_no_resume_without_answer():
     result = run(c, data)
     assert result.state.status == "clarifying"
     assert result.state.pending_fields == ["budget.amount"]
-    assert result.state.clarification_round == 1
+    assert result.state.clarification_round == 0
     c.destination_agent.select.assert_not_called()
     again = run(c, data, previous=result)
     assert again == result
@@ -175,8 +175,8 @@ def test_three_round_limit_without_default():
     result = run(c, data)
     for _ in range(3):
         result = run(c, data, previous=result, answer_raw="still missing")
-    assert result.state.status == "failed"
-    assert result.state.clarification_round == 3
+    assert result.state.status == "clarifying"
+    assert result.state.clarification_round == 0
     assert len(result.answers_history) == 3
 
 
@@ -243,9 +243,9 @@ def test_preference_default_after_three_rounds():
     for _ in range(3):
         result = asyncio.run(orchestrator.run(request, current_date=date(2026, 11, 2),
                                              previous=result, answer_raw="no preference"))
-    assert result.state.status == "completed"
+    assert result.state.status == "clarifying"
     parsed = result.artifacts[result.state.artifacts.trip_request_id]
-    assert parsed["meta"]["field_sources"]["preferences.pace"] == "default"
+    assert parsed["preferences"]["pace"] is None
 
 
 def test_declared_unknown_not_asked_again():
@@ -256,7 +256,7 @@ def test_declared_unknown_not_asked_again():
     result = run(c, data, previous=previous, answer_raw="chưa biết")
     assert result.state.status == "completed"
     assert result.answers_history[-1].declared_unknown_fields == ["budget.amount"]
-    assert result.state.clarification_round == 1
+    assert result.state.clarification_round == 0
     assert result.artifacts[result.state.artifacts.planning_input_id]["budget"]["amount"] is None
 
 

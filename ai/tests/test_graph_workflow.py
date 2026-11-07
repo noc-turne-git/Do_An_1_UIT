@@ -256,7 +256,7 @@ def test_limits(kind):
         assert [a.random_seed for a in r.attempts] == [42, 43]
 
 
-def test_clarification_limit_resume_and_previous_immutable():
+def test_offline_clarification_drafts_do_not_consume_budget():
     w = workflow(limits=GraphLimits(max_clarifications=2, max_revisions=20))
     data = fixture("trip_request")
     data["budget"]["amount"] = None
@@ -265,8 +265,8 @@ def test_clarification_limit_resume_and_previous_immutable():
     assert execute(w, data, previous=first) == first
     second = execute(w, data, previous=first, answer_raw="unknown")
     final = execute(w, data, previous=second, answer_raw="unknown")
-    assert final.state.status == "failed" and final.state.clarification_round == 2
-    assert first.state.clarification_round == 1 and len(first.answers_history) == 0
+    assert final.state.status == "clarifying" and final.state.clarification_round == 0
+    assert first.state.clarification_round == 0 and len(first.answers_history) == 0
     assert len(final.answers_history) == 2
 
 
@@ -369,7 +369,7 @@ def test_resume_clarification_records_resolved_field():
     assert final.pending_questions == []
 
 
-def test_defaults_only_after_clarification_exhausted():
+def test_offline_draft_does_not_exhaust_default_budget():
     data = fixture("trip_request")
     data["preferences"]["pace"] = None
     data["meta"]["field_sources"].pop("preferences.pace")
@@ -378,8 +378,9 @@ def test_defaults_only_after_clarification_exhausted():
     first = execute(w, data)
     assert first.state.status == "clarifying"
     final = execute(w, data, previous=first, answer_raw="Use default")
-    assert final.state.status == "completed"
-    assert final.outputs["request_parser"].meta.field_sources["preferences.pace"] == "default"
+    assert final.state.status == "clarifying"
+    assert final.state.clarification_round == 0
+    assert final.outputs["request_parser"].preferences.pace is None
 
 
 def test_module_cannot_mutate_state_or_original_input():

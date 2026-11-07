@@ -8,7 +8,8 @@ from app.api.auth import get_current_user_id
 from app.core.config import Settings
 from app.db.session import get_session
 from app.main import create_app
-from shared.contracts import TripRequest
+from shared.contracts import DestinationEpisode, TripRequest
+from ai.orchestration.clarification_questions import attach_identity
 from ai.orchestration.graph_workflow import GraphRun, LangGraphOrchestrator
 from ai.orchestration.mock_workflow import fixture, mock_components
 from app.services.persistence import WorkflowPersistence
@@ -43,6 +44,13 @@ def test_api_graph_dependency_and_persisted_result(monkeypatch):
     stored = {}
     monkeypatch.setattr(WorkflowPersistence, "request", lambda *a, **kw: row)
     monkeypatch.setattr(WorkflowPersistence, "save", lambda *a: None)
+    def issue_question(self, run, draft, trip_request, *, question_id=None):
+        episode = DestinationEpisode(episode_id=uuid4(), request_id=run.state.request_id)
+        issued = attach_identity(draft, question_id=question_id or uuid4(),
+            episode_id=episode.episode_id, intent_snapshot=episode.selection_intent, round=1)
+        return issued, episode, 1
+    monkeypatch.setattr(WorkflowPersistence, 'issue_question', issue_question)
+    monkeypatch.setattr(WorkflowPersistence, 'answer_question', lambda self, run, answer: answer)
     monkeypatch.setattr(WorkflowPersistence, "sync", lambda self, run: setattr(row, "status", run.state.status))
     monkeypatch.setattr(WorkflowPersistence, "save_graph", lambda self, run: stored.update(snapshot=run.model_dump_json()))
     monkeypatch.setattr(WorkflowPersistence, "load_graph", lambda *a: GraphRun.model_validate_json(stored["snapshot"]))
