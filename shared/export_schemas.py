@@ -9,7 +9,8 @@ def export():
     target = Path(__file__).parent / 'schemas'
     target.mkdir(exist_ok=True)
     for name in ('TripRequest', 'DestinationResult', 'PlaceCandidate', 'CostedPlaceCandidate',
-                 'TimeConstraints', 'PlanningInput', 'Itinerary', 'ValidationResult', 'WorkflowState'):
+                 'TimeConstraints', 'PlanningInput', 'Itinerary', 'ValidationResult', 'WorkflowState',
+                 'PendingQuestion', 'QuestionOption', 'AnswerHistory', 'DestinationEpisode'):
         schema = getattr(contracts, name).model_json_schema()
         schema['$schema'] = 'https://json-schema.org/draft/2020-12/schema'
         filename = re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower() + '.json'

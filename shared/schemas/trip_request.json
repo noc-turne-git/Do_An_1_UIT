@@ -255,6 +255,38 @@
     "Destination": {
       "additionalProperties": false,
       "properties": {
+        "selection_intent": {
+          "default": "UNSPECIFIED",
+          "enum": [
+            "EXPLICIT",
+            "ANY",
+            "UNKNOWN",
+            "UNSPECIFIED"
+          ],
+          "title": "Selection Intent",
+          "type": "string"
+        },
+        "selection_authority": {
+          "default": "none",
+          "enum": [
+            "none",
+            "user",
+            "delegated"
+          ],
+          "title": "Selection Authority",
+          "type": "string"
+        },
+        "selection_provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SelectionProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "selection_mode": {
           "anyOf": [
             {
@@ -464,6 +496,58 @@
         "field_confidences"
       ],
       "title": "RequestMeta",
+      "type": "object"
+    },
+    "SelectionProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": [
+            "user",
+            "default",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "evidence": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Evidence",
+          "type": "string"
+        },
+        "episode_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Episode Id"
+        },
+        "question_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question Id"
+        }
+      },
+      "required": [
+        "source",
+        "evidence"
+      ],
+      "title": "SelectionProvenance",
       "type": "object"
     },
     "Travelers": {

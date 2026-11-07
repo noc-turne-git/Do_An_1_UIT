@@ -26,7 +26,43 @@ class Contract(Model):
     schema_version: str = Field(default="1.0", pattern=r"^1\.\d+$")
 
 
-class Destination(Model):
+SelectionIntent = Literal["EXPLICIT", "ANY", "UNKNOWN", "UNSPECIFIED"]
+SelectionAuthority = Literal["none", "user", "delegated"]
+QuestionKind = Literal["trip_request", "destination_info", "destination_choice"]
+PositiveInt = Annotated[StrictInt, Field(gt=0)]
+NonEmpty = Annotated[str, Field(min_length=1, pattern=r"\S")]
+
+
+class SelectionProvenance(Model):
+    source: Literal["user", "default", "inferred"]
+    evidence: NonEmpty
+    episode_id: UUID | None = None
+    question_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def linked(self):
+        if self.question_id is not None and self.episode_id is None:
+            raise ValueError("question provenance requires episode_id")
+        return self
+
+
+class SelectionPolicy(Model):
+    selection_intent: SelectionIntent = "UNSPECIFIED"
+    selection_authority: SelectionAuthority = "none"
+    selection_provenance: SelectionProvenance | None = None
+
+    @model_validator(mode="after")
+    def authority_is_explicit(self):
+        if self.selection_authority != "none":
+            required = "ANY" if self.selection_authority == "delegated" else "EXPLICIT"
+            if self.selection_intent != required:
+                raise ValueError("selection authority conflicts with intent")
+            if self.selection_provenance is None or self.selection_provenance.source != "user":
+                raise ValueError("selection authority requires user provenance")
+        return self
+
+
+class Destination(SelectionPolicy):
     selection_mode: Literal["explicit", "implicit", "ambiguous"] | None
     city: str | None
     province: str | None
@@ -204,6 +240,33 @@ class Region(Model):
 
 class CandidateRegion(Region):
     reason: str
+    candidate_id: NonEmpty | None = None
+    rank: PositiveInt | None = None
+
+
+class ConstraintProposal(Model):
+    proposal_id: NonEmpty
+    fields: Annotated[list[NonEmpty], Field(min_length=1)]
+    proposed_values: dict[str, object]
+    reason: NonEmpty
+
+    @model_validator(mode="after")
+    def proposal_fields(self):
+        if set(self.fields) != set(self.proposed_values) or len(self.fields) != len(set(self.fields)):
+            raise ValueError("proposal values must match unique fields")
+        return self
+
+
+class InformationRequest(Model):
+    purpose: Literal["trip_request", "destination_info"]
+    fields: Annotated[list[NonEmpty], Field(min_length=1)]
+    reason: NonEmpty
+
+
+class DestinationRecovery(Model):
+    reason: NonEmpty
+    fields: Annotated[list[NonEmpty], Field(min_length=1)]
+    constraint_proposal: ConstraintProposal | None = None
 
 
 class DestinationResult(Contract):
@@ -213,15 +276,35 @@ class DestinationResult(Contract):
     selection_reason: str
     candidate_regions: list[CandidateRegion]
     missing_fields: list[str]
+    information_requests: list[InformationRequest] = Field(default_factory=list)
+    recovery: DestinationRecovery | None = None
+    selected_candidate_id: NonEmpty | None = None
+    selection_provenance: SelectionProvenance | None = None
 
     @model_validator(mode="after")
     def selection_consistent(self):
         if (self.selection_status == "selected") != (self.selected_region is not None):
             raise ValueError("selected status requires selected_region; other statuses must leave it null")
-        if self.selection_status == "needs_user_choice" and len(self.candidate_regions) < 2:
-            raise ValueError("needs_user_choice requires at least two candidates")
+        if self.selection_status == "needs_user_choice" and not self.candidate_regions:
+            raise ValueError("needs_user_choice requires at least one candidate for confirmation")
         if self.selection_status == "no_valid_candidate" and self.candidate_regions:
             raise ValueError("no_valid_candidate cannot contain candidates")
+        for key in ("candidate_id", "rank"):
+            values = [getattr(c, key) for c in self.candidate_regions if getattr(c, key) is not None]
+            if len(values) != len(set(values)):
+                raise ValueError(f"duplicate candidate {key}")
+        if self.information_requests and self.selection_status != "needs_more_info":
+            raise ValueError("information_requests require needs_more_info")
+        if self.recovery is not None and self.selection_status != "no_valid_candidate":
+            raise ValueError("recovery requires no_valid_candidate")
+        return self
+
+    def require_canonical_recovery(self):
+        """Legacy results remain readable, but cannot drive routing without purpose."""
+        if self.selection_status == "needs_more_info" and not self.information_requests:
+            raise ValueError("needs_more_info requires structured information_requests")
+        if self.selection_status == "no_valid_candidate" and self.recovery is None:
+            raise ValueError("no_valid_candidate requires structured recovery")
         return self
 
 
@@ -672,35 +755,141 @@ class ValidationResult(Contract):
 
 
 class QuestionOption(Model):
-    option_id: str
+    option_id: NonEmpty
     city: str
     province: str | None = None
     country: str | None = None
     reason: str | None = None
+    candidate_id: NonEmpty | None = None
+    rank: PositiveInt | None = None
 
 
 class PendingQuestion(Model):
-    question: str
+    question: NonEmpty
     fields: list[str]
-    kind: Literal["trip_request", "destination_choice"] = "trip_request"
+    kind: QuestionKind = "trip_request"
     options: list[QuestionOption] = Field(default_factory=list)
+    question_id: UUID | None = None
+    episode_id: UUID | None = None
+    status: Literal["legacy", "open", "answered", "cancelled"] = "legacy"
+    intent_snapshot: SelectionIntent = "UNSPECIFIED"
+    round: PositiveInt | None = None
+    constraint_proposal: ConstraintProposal | None = None
 
     @model_validator(mode="after")
     def unique_option_ids(self):
         option_ids = [option.option_id for option in self.options]
         if len(option_ids) != len(set(option_ids)):
             raise ValueError("question option_id values must be unique")
+        if self.status != "legacy":
+            if self.question_id is None or self.episode_id is None or self.round is None:
+                raise ValueError("canonical question requires identity, episode and round")
+            if not self.fields or any(not f.strip() for f in self.fields) or len(set(self.fields)) != len(self.fields):
+                raise ValueError("canonical question requires unique nonempty fields")
+            if self.kind == "destination_choice":
+                if not self.options or any(not o.candidate_id or not o.rank or not o.reason or not o.reason.strip() for o in self.options):
+                    raise ValueError("choice requires candidate identities, ranks and reasons")
+                for key in ("candidate_id", "rank"):
+                    values = [getattr(o, key) for o in self.options]
+                    if len(values) != len(set(values)):
+                        raise ValueError(f"duplicate option {key}")
+            elif self.options:
+                raise ValueError("only destination_choice has candidate options")
+            if self.constraint_proposal and (self.kind != "destination_info" or not set(self.constraint_proposal.fields) <= set(self.fields)):
+                raise ValueError("constraint proposal must belong to destination_info fields")
         return self
+
+    @property
+    def counter_group(self):
+        return "trip_request" if self.kind == "trip_request" else "destination"
+
+    def require_actionable(self):
+        # Revalidation also catches callers that mutated an existing model.
+        question = type(self).model_validate(self.model_dump())
+        if question.status != "open":
+            raise ValueError("question is not open/actionable")
+        return question
 
 
 class AnswerHistory(Model):
-    round: int
-    kind: Literal["trip_request", "destination_choice"] = "trip_request"
+    round: PositiveInt
+    kind: QuestionKind = "trip_request"
     asked_fields: list[str]
     question: str
     answer_raw: str
     resolved_fields: list[str]
     declared_unknown_fields: list[str]
+    answer_id: UUID | None = None
+    episode_id: UUID | None = None
+    question_id: UUID | None = None
+    selected_option_id: NonEmpty | None = None
+    confirmed_proposal_id: NonEmpty | None = None
+    constraint_confirmed: StrictBool | None = None
+
+    @model_validator(mode="after")
+    def linked_identity(self):
+        ids = (self.answer_id, self.episode_id, self.question_id)
+        if any(v is not None for v in ids) and not all(v is not None for v in ids):
+            raise ValueError("canonical answer requires answer, episode and question identity")
+        if self.selected_option_id and self.kind != "destination_choice":
+            raise ValueError("selection requires destination_choice")
+        if (self.confirmed_proposal_id is None) != (self.constraint_confirmed is None):
+            raise ValueError("constraint confirmation requires proposal identity and decision")
+        if (self.selected_option_id or self.confirmed_proposal_id) and self.answer_id is None:
+            raise ValueError("selection/confirmation requires canonical identity")
+        return self
+
+    def validate_for(self, question: PendingQuestion):
+        question.require_actionable()
+        if self.answer_id is None or self.question_id != question.question_id or self.episode_id != question.episode_id:
+            raise ValueError("stale or cross-episode answer")
+        if (self.kind, self.round, self.question, self.asked_fields) != (question.kind, question.round, question.question, question.fields):
+            raise ValueError("answer snapshot differs from question")
+        if not set(self.resolved_fields + self.declared_unknown_fields) <= set(question.fields):
+            raise ValueError("answer fields outside question")
+        if set(self.resolved_fields) & set(self.declared_unknown_fields):
+            raise ValueError("field cannot be resolved and unknown")
+        if question.kind == "destination_choice" and self.selected_option_id not in {o.option_id for o in question.options}:
+            raise ValueError("unknown or missing option")
+        if question.constraint_proposal:
+            if self.confirmed_proposal_id != question.constraint_proposal.proposal_id or self.constraint_confirmed is None:
+                raise ValueError("proposal requires explicit confirmation decision")
+        elif self.confirmed_proposal_id is not None:
+            raise ValueError("question has no constraint proposal")
+        return self
+
+
+class DestinationEpisode(SelectionPolicy):
+    episode_id: UUID
+    request_id: UUID
+    status: Literal["active", "completed", "failed"] = "active"
+    destination_round: Minutes = 0
+    max_destination_rounds: Annotated[StrictInt, Field(ge=0, le=2)] = 2
+    final_resolve_status: Literal["not_started", "claimed", "completed"] = "not_started"
+    final_resolve_id: UUID | None = None
+    final_resolve_result: DestinationResult | None = None
+
+    @model_validator(mode="after")
+    def consistent(self):
+        if self.destination_round > self.max_destination_rounds:
+            raise ValueError("episode destination budget exceeded")
+        if (self.final_resolve_status == "not_started") != (self.final_resolve_id is None):
+            raise ValueError("final resolve identity/state mismatch")
+        if (self.final_resolve_status == "completed") != (self.final_resolve_result is not None):
+            raise ValueError("completed final resolve requires persisted result")
+        return self
+
+    def default_candidate(self):
+        """A permission gate, not an orchestration side effect."""
+        self.consistent()
+        self.authority_is_explicit()
+        if self.status == 'failed' or self.selection_intent != "ANY" or self.selection_authority != "delegated" or self.final_resolve_status != "completed":
+            raise ValueError("default requires delegated ANY after final resolve")
+        candidates = self.final_resolve_result.candidate_regions
+        ranked = [c for c in candidates if c.rank == 1 and c.candidate_id and c.reason.strip()]
+        if len(ranked) != 1:
+            raise ValueError("no unique valid rank 1 candidate")
+        return ranked[0]
 
 
 class Attempt(Model):
@@ -744,6 +933,7 @@ class WorkflowState(Contract):
     max_clarification_rounds: Minutes = 3
     destination_round: Minutes = 0
     max_destination_rounds: Minutes = 2
+    destination_episode: DestinationEpisode | None = None
     pending_fields: list[str]
     retry_count: Minutes
 
@@ -753,6 +943,12 @@ class WorkflowState(Contract):
             raise ValueError("clarification limit exceeded")
         if self.destination_round > self.max_destination_rounds:
             raise ValueError("destination limit exceeded")
+        if self.destination_episode:
+            episode = self.destination_episode
+            if episode.request_id != self.request_id:
+                raise ValueError("episode belongs to another workflow")
+            if (self.destination_round, self.max_destination_rounds) != (episode.destination_round, episode.max_destination_rounds):
+                raise ValueError("workflow destination budget must mirror episode")
         return self
 
 

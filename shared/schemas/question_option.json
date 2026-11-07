@@ -1,0 +1,85 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "option_id": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Option Id",
+      "type": "string"
+    },
+    "city": {
+      "title": "City",
+      "type": "string"
+    },
+    "province": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Province"
+    },
+    "country": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Country"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "candidate_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Candidate Id"
+    },
+    "rank": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rank"
+    }
+  },
+  "required": [
+    "option_id",
+    "city"
+  ],
+  "title": "QuestionOption",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

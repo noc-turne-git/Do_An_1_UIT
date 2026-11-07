@@ -1,0 +1,240 @@
+{
+  "$defs": {
+    "ConstraintProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "proposal_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Fields",
+          "type": "array"
+        },
+        "proposed_values": {
+          "additionalProperties": true,
+          "title": "Proposed Values",
+          "type": "object"
+        },
+        "reason": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "fields",
+        "proposed_values",
+        "reason"
+      ],
+      "title": "ConstraintProposal",
+      "type": "object"
+    },
+    "QuestionOption": {
+      "additionalProperties": false,
+      "properties": {
+        "option_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Option Id",
+          "type": "string"
+        },
+        "city": {
+          "title": "City",
+          "type": "string"
+        },
+        "province": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Province"
+        },
+        "country": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Country"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidate Id"
+        },
+        "rank": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rank"
+        }
+      },
+      "required": [
+        "option_id",
+        "city"
+      ],
+      "title": "QuestionOption",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "question": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Question",
+      "type": "string"
+    },
+    "fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Fields",
+      "type": "array"
+    },
+    "kind": {
+      "default": "trip_request",
+      "enum": [
+        "trip_request",
+        "destination_info",
+        "destination_choice"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "options": {
+      "items": {
+        "$ref": "#/$defs/QuestionOption"
+      },
+      "title": "Options",
+      "type": "array"
+    },
+    "question_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Question Id"
+    },
+    "episode_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Episode Id"
+    },
+    "status": {
+      "default": "legacy",
+      "enum": [
+        "legacy",
+        "open",
+        "answered",
+        "cancelled"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "intent_snapshot": {
+      "default": "UNSPECIFIED",
+      "enum": [
+        "EXPLICIT",
+        "ANY",
+        "UNKNOWN",
+        "UNSPECIFIED"
+      ],
+      "title": "Intent Snapshot",
+      "type": "string"
+    },
+    "round": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Round"
+    },
+    "constraint_proposal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ConstraintProposal"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "question",
+    "fields"
+  ],
+  "title": "PendingQuestion",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

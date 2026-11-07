@@ -34,6 +34,33 @@
         "reason": {
           "title": "Reason",
           "type": "string"
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidate Id"
+        },
+        "rank": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rank"
         }
       },
       "required": [
@@ -41,6 +68,120 @@
         "reason"
       ],
       "title": "CandidateRegion",
+      "type": "object"
+    },
+    "ConstraintProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "proposal_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Fields",
+          "type": "array"
+        },
+        "proposed_values": {
+          "additionalProperties": true,
+          "title": "Proposed Values",
+          "type": "object"
+        },
+        "reason": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "fields",
+        "proposed_values",
+        "reason"
+      ],
+      "title": "ConstraintProposal",
+      "type": "object"
+    },
+    "DestinationRecovery": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Reason",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Fields",
+          "type": "array"
+        },
+        "constraint_proposal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConstraintProposal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "reason",
+        "fields"
+      ],
+      "title": "DestinationRecovery",
+      "type": "object"
+    },
+    "InformationRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "purpose": {
+          "enum": [
+            "trip_request",
+            "destination_info"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Fields",
+          "type": "array"
+        },
+        "reason": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "purpose",
+        "fields",
+        "reason"
+      ],
+      "title": "InformationRequest",
       "type": "object"
     },
     "Region": {
@@ -79,6 +220,58 @@
         "city"
       ],
       "title": "Region",
+      "type": "object"
+    },
+    "SelectionProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": [
+            "user",
+            "default",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "evidence": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Evidence",
+          "type": "string"
+        },
+        "episode_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Episode Id"
+        },
+        "question_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question Id"
+        }
+      },
+      "required": [
+        "source",
+        "evidence"
+      ],
+      "title": "SelectionProvenance",
       "type": "object"
     }
   },
@@ -137,6 +330,49 @@
       },
       "title": "Missing Fields",
       "type": "array"
+    },
+    "information_requests": {
+      "items": {
+        "$ref": "#/$defs/InformationRequest"
+      },
+      "title": "Information Requests",
+      "type": "array"
+    },
+    "recovery": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DestinationRecovery"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "selected_candidate_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Selected Candidate Id"
+    },
+    "selection_provenance": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SelectionProvenance"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

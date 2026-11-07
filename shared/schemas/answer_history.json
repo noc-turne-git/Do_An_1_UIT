@@ -1,0 +1,139 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "round": {
+      "exclusiveMinimum": 0,
+      "title": "Round",
+      "type": "integer"
+    },
+    "kind": {
+      "default": "trip_request",
+      "enum": [
+        "trip_request",
+        "destination_info",
+        "destination_choice"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "asked_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Asked Fields",
+      "type": "array"
+    },
+    "question": {
+      "title": "Question",
+      "type": "string"
+    },
+    "answer_raw": {
+      "title": "Answer Raw",
+      "type": "string"
+    },
+    "resolved_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Resolved Fields",
+      "type": "array"
+    },
+    "declared_unknown_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Declared Unknown Fields",
+      "type": "array"
+    },
+    "answer_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Answer Id"
+    },
+    "episode_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Episode Id"
+    },
+    "question_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Question Id"
+    },
+    "selected_option_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Selected Option Id"
+    },
+    "confirmed_proposal_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confirmed Proposal Id"
+    },
+    "constraint_confirmed": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Constraint Confirmed"
+    }
+  },
+  "required": [
+    "round",
+    "asked_fields",
+    "question",
+    "answer_raw",
+    "resolved_fields",
+    "declared_unknown_fields"
+  ],
+  "title": "AnswerHistory",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
