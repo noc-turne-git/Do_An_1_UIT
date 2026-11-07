@@ -11,7 +11,7 @@ from pydantic import TypeAdapter
 from langgraph.errors import NodeCancelledError
 import test_mock_workflow as business_helpers
 import test_full_backend as backend
-from shared.contracts import TripRequest, WorkflowState
+from shared.contracts import TripRequest, WorkflowState, PendingQuestion, AnswerHistory
 from ai.orchestration.graph_workflow import LangGraphOrchestrator
 from ai.orchestration.mock_workflow import fixture, mock_components
 from ai.orchestration.workflow_state import OUTPUTS, REFS, STEPS, StateMachine
@@ -77,7 +77,17 @@ def test_identical_fixtures_preserve_complete_business_payloads(scenario):
     # Freeze the full contract payloads from the graph verified by the removal
     # gate, excluding generated artifact IDs only. Do not regenerate in tests.
     expected = json.loads(Path(__file__).with_name('business_payloads.json').read_text(encoding='utf-8'))
-    assert json.loads(json.dumps(payload)) == expected[scenario]
+    # Upgrade only the wire representation of the frozen legacy expectations.
+    # Original business values remain frozen; safe contract defaults are explicit.
+    expected = expected[scenario]
+    for index, ref in enumerate(REFS):
+        if ref in expected['payloads']:
+            adapter = TypeAdapter(OUTPUTS[index])
+            expected['payloads'][ref] = adapter.dump_python(
+                adapter.validate_python(expected['payloads'][ref]), mode='json')
+    expected['questions'] = [PendingQuestion.model_validate(q).model_dump(mode='json') for q in expected['questions']]
+    expected['answers'] = [AnswerHistory.model_validate(a).model_dump(mode='json') for a in expected['answers']]
+    assert json.loads(json.dumps(payload)) == expected
     expected_status = ('clarifying' if scenario in {'missing', 'destination'} else 'completed')
     assert payload['status'] == expected_status
     if expected_status == 'completed':

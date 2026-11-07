@@ -25,7 +25,7 @@ class OwnedRepository:
         query = select(WorkflowRequestRecord).join(TripRecord).where(
             WorkflowRequestRecord.request_id == request_id, TripRecord.user_id == self.user_id)
         if lock:
-            query = query.with_for_update(of=WorkflowRequestRecord)
+            query = query.with_for_update(of=WorkflowRequestRecord).execution_options(populate_existing=True)
         row = self.session.scalar(query)
         if row is None:
             raise ApplicationError("not_found", "Request not found")
@@ -58,6 +58,14 @@ class RequestRepository(OwnedRepository):
         row = self.request(state.request_id, lock=True)
         if row.trip_id != state.trip_id:
             raise ApplicationError("planning_input_inconsistent", "Trip and request differ")
+        if row.status == 'failed' and state.status != 'failed':
+            raise ApplicationError('planning_input_inconsistent', 'Failed workflow is terminal')
+        if row.active_episode_id:
+            from app.repositories.clarifications import ClarificationRepository
+            repo = ClarificationRepository(self.session, self.user_id)
+            episode = repo.contract(repo.episode(row.request_id))
+            if state.destination_episode != episode or state.clarification_round != row.clarification_round:
+                raise ApplicationError('planning_input_inconsistent', 'Canonical state must match persisted episode and issuance budget')
         for field in ("status", "current_step", "clarification_round", "max_clarification_rounds",
                        "destination_round", "max_destination_rounds", "retry_count"):
             setattr(row, field, getattr(state, field))

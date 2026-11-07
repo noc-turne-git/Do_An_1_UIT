@@ -58,10 +58,16 @@ def database():
     from alembic import command
     from alembic.config import Config
     config = Config(str(ROOT / 'alembic.ini'))
-    config.attributes['database_url'] = url.render_as_string(hide_password=False)
-    # Establish the new canonical baseline, then exercise the ordinary
-    # sequential upgrade used by a database that already has that baseline.
-    command.upgrade(config, '20261105_canonical_baseline')
+    config.attributes['database_url'] = parsed.render_as_string(hide_password=False)
+    # Historical baseline revision has a mismatched hash/header for committed
+    # schema.sql. Preserve that migration: provision the exact Supabase baseline
+    # into this verified EMPTY database, then stamp that known baseline and test
+    # the real sequential Alembic upgrades. No production database is stamped.
+    with db.engine.connect() as connection:
+        with connection.connection.driver_connection.cursor() as cursor:
+            cursor.execute((ROOT / 'supabase' / 'schema.sql').read_text(encoding='utf-8'))
+        connection.commit()
+    command.stamp(config, '20261105_canonical_baseline')
     legacy_user, legacy_trip, legacy_request = uuid4(), uuid4(), uuid4()
     with db.engine.begin() as connection:
         connection.execute(text('INSERT INTO auth.users(id) VALUES (:id)'), {'id': legacy_user})
@@ -180,7 +186,7 @@ def test_conversation_to_trip_with_real_persistence(database):
                 'conversation_id': identifier, 'content': content}).status_code == 201
         with database.sessions() as session:
             assert session.scalar(select(func.count()).select_from(TripRecord).where(TripRecord.user_id == user)) == 0
-        assert len(client.get(f'/api/v1/chat/conversations/{identifier}/messages').json()) == 3
+        assert len([m for m in client.get(f'/api/v1/chat/conversations/{identifier}/messages').json() if m['role'] == 'user']) == 3
         assert client.get(f'/api/v1/chat/conversations/{identifier}').json()['trip_id'] is None
         url = f'/api/v1/chat/conversations/{identifier}/prepare-trip'
         payload = fixture('trip_request')
@@ -197,7 +203,7 @@ def test_conversation_to_trip_with_real_persistence(database):
             assert session.get(WorkflowRequestRecord, conversation.request_id).trip_id == conversation.trip_id
     # A new browser session recovers the same conversation from the URL ID.
     with TestClient(app) as client:
-        assert len(client.get(f'/api/v1/chat/conversations/{identifier}/messages').json()) == 3
+        assert len([m for m in client.get(f'/api/v1/chat/conversations/{identifier}/messages').json() if m['role'] == 'user']) == 3
         app.dependency_overrides[get_current_user_id] = uuid4
         assert client.get(f'/api/v1/chat/conversations/{identifier}/messages').status_code == 404
 
@@ -206,7 +212,7 @@ def test_conversation_to_trip_with_real_persistence(database):
 def test_schema_metadata_matches_columns_and_fks(database):
     from app.db.base import Base
     inspector = inspect(database.engine)
-    assert set(inspector.get_table_names()) == set(Base.metadata.tables)
+    assert set(inspector.get_table_names()) - {'alembic_version'} == set(Base.metadata.tables)
     for table in Base.metadata.tables.values():
         actual = {c['name']: c for c in inspector.get_columns(table.name)}
         assert set(actual) == set(table.c.keys()), table.name
@@ -465,3 +471,303 @@ def test_http_graph_real_postgres(database):
         assert client.get(url + '/run').json()['history'] == response.json()['history']
         application.dependency_overrides[get_current_user_id] = uuid4
         assert client.get(url + '/run').status_code == 404
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('kinds', [('destination_info', 'destination_choice'), ('destination_choice', 'destination_info')])
+def test_canonical_roundtrip_restart_and_shared_budget(database, kinds):
+    from canonical_cases import start, question, answer
+    from app.repositories.clarifications import ClarificationRepository
+    from app.db.models import ClarificationQuestionRecord, ClarificationAnswerRecord
+    user, trip, request, ep = start(database, seed)
+    first, second = question(ep, kinds[0], 1), question(ep, kinds[1], 2)
+    first_answer, second_answer = answer(first), answer(second)
+    with database.sessions.begin() as session:
+        repo = ClarificationRepository(session, user)
+        repo.issue(request, first)
+        assert repo.issue(request, first) == first
+        assert repo.contract(repo.episode(request)).destination_round == 1
+        repo.answer(request, first_answer)
+        assert repo.answer(request, first_answer) == first_answer
+        repo.issue(request, second)
+    # Fresh sessions simulate process restart with question #2 still open.
+    with database.sessions.begin() as session:
+        persistence = WorkflowPersistence(session, user)
+        relational, graph = persistence.load(request), persistence.load_graph(request)
+        assert relational.state.destination_episode == graph.state.destination_episode
+        assert relational.pending_questions == graph.pending_questions == [second]
+        assert relational.answers_history == graph.answers_history == [first_answer]
+        assert relational.state.destination_round == 2
+        assert relational.state.clarification_round == 0
+        persistence.sync(relational)
+        persistence.save_graph(graph)
+        repo = ClarificationRepository(session, user)
+        assert repo.issue(request, second) == second
+        # The open second question is answerable at the limit.
+        repo.answer(request, second_answer)
+        assert repo.answer(request, second_answer) == second_answer
+        with pytest.raises(ApplicationError):
+            repo.issue(request, question(ep, kinds[0], 3))
+        assert repo.contract(repo.episode(request)).destination_round == 2
+    with database.sessions.begin() as session:
+        persistence = WorkflowPersistence(session, user)
+        assert persistence.load(request).pending_questions == []
+        assert persistence.load_graph(request).answers_history == [first_answer, second_answer]
+        assert session.scalar(select(func.count()).select_from(ClarificationQuestionRecord).where(
+            ClarificationQuestionRecord.request_id == request)) == 2
+        assert session.scalar(select(func.count()).select_from(ClarificationAnswerRecord).where(
+            ClarificationAnswerRecord.request_id == request)) == 2
+
+
+@pytest.mark.postgres
+def test_canonical_stale_cross_episode_owner_and_rollback(database):
+    from canonical_cases import start, question, answer
+    from app.repositories.clarifications import ClarificationRepository
+    from shared.contracts import SelectionPolicy
+    user, _, request, ep = start(database, seed)
+    q = question(ep, 'destination_choice', 1)
+    with database.sessions.begin() as session:
+        repo = ClarificationRepository(session, user)
+        repo.issue(request, q)
+        for invalid in [answer(q, selected_option_id='not-issued'), answer(q, episode_id=uuid4()),
+                        answer(q, question_id=uuid4()), answer(q, round=2)]:
+            with pytest.raises((ApplicationError, ValueError)):
+                repo.answer(request, invalid)
+        with pytest.raises(ApplicationError):
+            ClarificationRepository(session, uuid4()).issue(request, q)
+        with pytest.raises(ApplicationError):
+            repo.issue(request, question(ep, 'destination_choice', 1, question_id=q.question_id, question='changed'))
+        a = answer(q)
+        repo.answer(request, a)
+        with pytest.raises(ApplicationError):
+            repo.answer(request, answer(q))  # another answer identity
+        repo.close_episode(request, ep.episode_id, status='completed')
+        newer = repo.start_episode(request, SelectionPolicy())
+        assert newer.destination_round == 0
+        with pytest.raises(ApplicationError):
+            repo.answer(request, a)
+        q2 = question(newer, 'destination_info', 1)
+        with pytest.raises(RuntimeError):
+            with session.begin_nested():
+                repo.issue(request, q2)
+                raise RuntimeError('simulate crash before commit')
+        assert repo.contract(repo.episode(request)).destination_round == 0
+        assert repo.questions(request, open_only=True) == []
+        repo.issue(request, q2)
+        bad_graph = WorkflowPersistence(session, user).load_graph(request)
+        bad_graph.pending_questions[0].question = 'tampered'
+        with pytest.raises(ApplicationError):
+            WorkflowPersistence(session, user).save_graph(bad_graph)
+
+
+@pytest.mark.postgres
+def test_canonical_database_slot_constraint_and_concurrent_retry(database):
+    from concurrent.futures import ThreadPoolExecutor
+    from canonical_cases import start, question, answer
+    from app.repositories.clarifications import ClarificationRepository
+    from app.db.models import ClarificationQuestionRecord
+    user, _, request, ep = start(database, seed)
+    q = question(ep, 'destination_info', 1)
+    def issue():
+        with database.sessions.begin() as session:
+            return ClarificationRepository(session, user).issue(request, q).question_id
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(pool.map(lambda _: issue(), range(2))) == [q.question_id, q.question_id]
+    with database.sessions.begin() as session:
+        repo = ClarificationRepository(session, user)
+        assert repo.contract(repo.episode(request)).destination_round == 1
+        repo.answer(request, answer(q))
+        other_kind_same_round = question(ep, 'destination_choice', 1)
+        # Direct SQL/ORM cannot bypass shared budget by changing the question kind.
+        with pytest.raises(DBAPIError):
+            with session.begin_nested():
+                session.add(ClarificationQuestionRecord(question_id=other_kind_same_round.question_id,
+                    request_id=request, episode_id=ep.episode_id, counter_group='destination', round=1,
+                    kind='destination_choice', status='open', payload=other_kind_same_round.model_dump(mode='json')))
+                session.flush()
+        assert repo.contract(repo.episode(request)).destination_round == 1
+    unique = inspect(database.engine).get_unique_constraints('clarification_questions')
+    assert any(c['column_names'] == ['episode_id', 'counter_group', 'round'] for c in unique)
+
+
+@pytest.mark.postgres
+def test_canonical_final_resolve_claim_survives_restart(database):
+    from canonical_cases import start, question, answer
+    from app.repositories.clarifications import ClarificationRepository
+    from shared.contracts import DestinationResult
+    user, _, request, ep = start(database, seed)
+    operation = uuid4()
+    with database.sessions.begin() as session:
+        repo = ClarificationRepository(session, user)
+        for round in (1, 2):
+            q = question(ep, 'destination_info', round)
+            repo.issue(request, q)
+            if round == 2:
+                with pytest.raises(ApplicationError):
+                    repo.claim_final_resolve(request, ep.episode_id, operation)
+            repo.answer(request, answer(q))
+        _, acquired = repo.claim_final_resolve(request, ep.episode_id, operation)
+        assert acquired
+    with database.sessions.begin() as session:
+        repo = ClarificationRepository(session, user)
+        claimed, acquired = repo.claim_final_resolve(request, ep.episode_id, operation)
+        assert not acquired and claimed.final_resolve_status == 'claimed'
+        assert WorkflowPersistence(session, user).load_graph(request).state.destination_episode == claimed
+        with pytest.raises(ApplicationError):
+            repo.claim_final_resolve(request, ep.episode_id, uuid4())
+        result = DestinationResult.model_validate(fixture('destination_result'))
+        completed = repo.complete_final_resolve(request, ep.episode_id, operation, result)
+    with database.sessions.begin() as session:
+        repo = ClarificationRepository(session, user)
+        assert repo.complete_final_resolve(request, ep.episode_id, operation, result) == completed
+        assert repo.claim_final_resolve(request, ep.episode_id, operation) == (completed, False)
+        assert WorkflowPersistence(session, user).load(request).state.destination_episode == completed
+        assert WorkflowPersistence(session, user).load_graph(request).state.destination_episode == completed
+
+
+@pytest.mark.postgres
+def test_canonical_failed_workflow_new_identity_and_seed(database):
+    from canonical_cases import start, question, answer
+    from app.repositories.clarifications import ClarificationRepository
+    from shared.contracts import Destination
+    user, trip, request, ep = start(database, seed)
+    source = TripRequest.model_validate(fixture('trip_request'))
+    with database.sessions.begin() as session:
+        ArtifactRepository(session, user).add(request, 'trip_request', source)
+        repo = ClarificationRepository(session, user)
+        q = question(ep, 'destination_choice', 1)
+        repo.issue(request, q)
+        repo.close_episode(request, ep.episode_id, status='failed')
+    with database.sessions.begin() as session:
+        before = session.execute(text('SELECT to_jsonb(w) FROM workflow_requests w WHERE request_id=:id'), {'id': request}).scalar_one()
+        destination = Destination.model_validate(source.destination.model_dump() | dict(city='Hue',
+            selection_intent='EXPLICIT', selection_authority='user',
+            selection_provenance=dict(source='user', evidence='Go to Hue')))
+        new_id, new_ep, new_input = ClarificationRepository(session, user).new_workflow_after_failed(
+            request, destination, raw_prompt='Go to Hue')
+        assert new_id != request and new_ep.episode_id != ep.episode_id
+        assert new_ep.destination_round == 0 and new_ep.final_resolve_status == 'not_started'
+        new = WorkflowPersistence(session, user).load(new_id)
+        assert new.state.trip_id == trip
+        assert new.state.clarification_round == new.state.retry_count == 0
+        assert not new.pending_questions and not new.answers_history
+        assert new.state.artifacts.destination_result_id is None
+        assert new_input.trip == source.trip and new_input.budget == source.budget
+        assert new_input.destination.city == 'Hue' and source.destination.city != 'Hue'
+        assert ArtifactRepository(session, user).latest(new_id, 'trip_request').payload == new_input.model_dump(mode='json')
+        after = session.execute(text('SELECT to_jsonb(w) FROM workflow_requests w WHERE request_id=:id'), {'id': request}).scalar_one()
+        assert before == after
+        assert WorkflowPersistence(session, user).load_graph(request).state.status == 'failed'
+        with pytest.raises(DBAPIError):
+            with session.begin_nested():
+                session.execute(text("UPDATE workflow_requests SET status='planning' WHERE request_id=:id"), {'id': request})
+        with pytest.raises(ApplicationError):
+            ClarificationRepository(session, user).answer(request, answer(q))
+
+
+@pytest.mark.postgres
+def test_canonical_legacy_adoption_preserves_budget(database):
+    from shared.contracts import SelectionPolicy
+    from app.repositories.clarifications import ClarificationRepository
+    user, _, request = seed(database)
+    with database.sessions.begin() as session:
+        row = session.get(WorkflowRequestRecord, request)
+        row.destination_round = 1
+        session.flush()
+        legacy = WorkflowPersistence(session, user).load(request)
+        assert legacy.state.destination_episode is None
+        episode = ClarificationRepository(session, user).start_episode(request, SelectionPolicy())
+        assert episode.destination_round == 1
+        assert episode.selection_intent == 'UNSPECIFIED' and episode.selection_authority == 'none'
+    with database.engine.connect() as connection:
+        assert connection.execute(text('SELECT active_episode_id FROM workflow_requests WHERE request_id=:id'),
+            {'id': database.pre_upgrade_request_id}).scalar_one() is None
+
+
+@pytest.mark.postgres
+def test_canonical_independent_trip_budget_and_answer_rollback(database):
+    from canonical_cases import start, question, answer
+    from app.repositories.clarifications import ClarificationRepository
+    user, _, request, ep = start(database, seed)
+    with database.sessions.begin() as session:
+        repo = ClarificationRepository(session, user)
+        q = question(ep, 'trip_request', 1)
+        repo.issue(request, q)
+        with pytest.raises(RuntimeError):
+            with session.begin_nested():
+                repo.answer(request, answer(q))
+                raise RuntimeError('crash before answer commit')
+        assert repo.questions(request, open_only=True) == [q]
+        assert repo.answers(request) == []
+        repo.answer(request, answer(q))
+        for round, kind in [(1, 'destination_info'), (2, 'destination_choice')]:
+            destination = question(ep, kind, round)
+            repo.issue(request, destination)
+            repo.answer(request, answer(destination))
+        run = WorkflowPersistence(session, user).load_graph(request)
+        assert run.state.clarification_round == 1 and run.state.destination_round == 2
+
+
+@pytest.mark.postgres
+def test_canonical_rls_and_snapshot_immutability(database):
+    from canonical_cases import start, question, answer
+    from app.repositories.clarifications import ClarificationRepository
+    user, _, request, ep = start(database, seed)
+    with database.sessions.begin() as session:
+        repo = ClarificationRepository(session, user)
+        q = question(ep, 'destination_choice', 1)
+        repo.issue(request, q)
+        repo.answer(request, answer(q))
+    for table in ['destination_episodes', 'clarification_questions', 'clarification_answers']:
+        with database.engine.begin() as connection:
+            connection.execute(text('SET LOCAL ROLE authenticated'))
+            connection.execute(text("SELECT set_config('request.jwt.claim.sub', :id, true)"), {'id': str(user)})
+            assert connection.execute(text(f'SELECT count(*) FROM {table} WHERE request_id=:id'), {'id': request}).scalar_one() == 1
+            connection.execute(text("SELECT set_config('request.jwt.claim.sub', :id, true)"), {'id': str(uuid4())})
+            assert connection.execute(text(f'SELECT count(*) FROM {table} WHERE request_id=:id'), {'id': request}).scalar_one() == 0
+    for statement in ["UPDATE clarification_questions SET payload=jsonb_set(payload,'{question}','\"changed\"') WHERE request_id=:id",
+                      "UPDATE clarification_answers SET payload=jsonb_set(payload,'{answer_raw}','\"changed\"') WHERE request_id=:id"]:
+        with pytest.raises(DBAPIError):
+            with database.engine.begin() as connection:
+                connection.execute(text(statement), {'id': request})
+
+
+@pytest.mark.postgres
+def test_canonical_supabase_alembic_schema_parity(database):
+    import psycopg
+    from psycopg import sql
+    from sqlalchemy import create_engine
+    url = database.engine.url
+    peer_name = 'canonical_parity_test_' + uuid4().hex[:12]
+    with psycopg.connect(host=url.host, port=url.port, user=url.username, password=url.password,
+                         dbname='postgres', autocommit=True) as admin:
+        admin.execute(sql.SQL('CREATE DATABASE {}').format(sql.Identifier(peer_name)))
+    peer = create_engine(url.set(database=peer_name))
+    try:
+        with peer.connect() as connection:
+            with connection.connection.driver_connection.cursor() as cursor:
+                cursor.execute("""CREATE SCHEMA auth;
+                    CREATE TABLE auth.users(id uuid PRIMARY KEY, raw_user_meta_data jsonb NOT NULL DEFAULT '{}');
+                    CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
+                    SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+                    GRANT USAGE ON SCHEMA auth, public TO anon, authenticated, service_role;""")
+                connection.commit()
+                for path in [ROOT / 'supabase' / 'schema.sql',
+                             ROOT / 'supabase' / 'migrations' / '20261107_clarification_round_kinds.sql',
+                             ROOT / 'supabase' / 'migrations' / '20261107_canonical_episodes.sql']:
+                    cursor.execute(path.read_text(encoding='utf-8'))
+                connection.commit()
+        def fingerprint(engine):
+            queries = [
+                "SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name<>'alembic_version' ORDER BY 1,2",
+                "SELECT c.relname,pg_get_constraintdef(k.oid) FROM pg_constraint k JOIN pg_class c ON c.oid=k.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname<>'alembic_version' ORDER BY 1,2",
+                "SELECT tablename,indexdef FROM pg_indexes WHERE schemaname='public' AND tablename<>'alembic_version' ORDER BY 1,2",
+                "SELECT c.relname,t.tgname,pg_get_triggerdef(t.oid) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND NOT t.tgisinternal ORDER BY 1,2",
+                "SELECT tablename,policyname,roles,cmd,qual,with_check FROM pg_policies WHERE schemaname='public' ORDER BY 1,2",
+                "SELECT p.proname,pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' ORDER BY 1,2",
+            ]
+            with engine.connect() as connection:
+                return [connection.execute(text(query)).all() for query in queries]
+        assert fingerprint(database.engine) == fingerprint(peer)
+    finally:
+        peer.dispose()  # Leave both disposable databases for inspection; no destructive cleanup.

@@ -1,5 +1,5 @@
 from alembic import context
-from sqlalchemy import create_engine, pool
+from sqlalchemy import create_engine, pool, text
 
 from app.core.config import get_settings
 from app.db.base import Base
@@ -23,6 +23,10 @@ else:
         with engine.connect() as connection:
             context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
             with context.begin_transaction():
+                # Historical revision IDs exceed Alembic's default varchar(32).
+                # Keep those committed IDs intact for existing databases.
+                connection.execute(text('CREATE TABLE IF NOT EXISTS alembic_version (version_num varchar(128) NOT NULL PRIMARY KEY)'))
+                connection.execute(text('ALTER TABLE alembic_version ALTER COLUMN version_num TYPE varchar(128)'))
                 context.run_migrations()
     finally:
         engine.dispose()

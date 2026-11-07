@@ -1,6 +1,6 @@
 # Schema Supabase cho hệ thống lập lịch trình
 
-`schema.sql` là DDL baseline bất biến cho **database Supabase mới**, chạy một lần bằng SQL Editor với quyền database owner. Script chạy trong một transaction, tạo enum, 19 bảng, FK, CHECK, index, trigger và policy. Mỗi bảng có chú thích mục đích ngay trước `CREATE TABLE`. Sau baseline, áp dụng mọi migration trong `migrations/` theo thứ tự phiên bản.
+`schema.sql` là baseline cho **database Supabase mới**, chạy một lần bằng SQL Editor với quyền database owner. Giữ nguyên SQL và migrations đã commit. Baseline hiện đã chứa conversations; không chạy lại migration conversations trên baseline này. Chạy tiếp `20261107_clarification_round_kinds.sql`, rồi `20261107_canonical_episodes.sql` theo đúng thứ tự phụ thuộc (không sort tên file). Schema hiện có 23 bảng nghiệp vụ.
 
 Đây là lựa chọn **DDL SQL** trong yêu cầu, không phải migration nâng cấp schema hiện tại. Không chạy lên database đã có bảng `trips` của Alembic `0001`. Model và repository đã đồng bộ schema mới; dữ liệu cũ vẫn cần chuyển đổi riêng. Script chưa được áp dụng lên Supabase.
 
@@ -48,7 +48,7 @@ Production nên dùng role runtime **không phải admin**, được cấp quy�
 ## Việc cần làm tay
 
 1. Cài dependencies mới (httpx là dependency runtime).
-2. Với database Supabase mới/rỗng: chạy schema.sql, sau đó chạy tuần tự mọi file trong `migrations/` (hiện có `20261107_clarification_round_kinds.sql`). Đăng ký/đăng nhập qua Supabase Auth để có profile; script backfill cho user đã tồn tại.
+2. Với database Supabase mới/rỗng: chạy schema.sql, sau đó `20261107_clarification_round_kinds.sql` và `20261107_canonical_episodes.sql`. Đăng ký/đăng nhập qua Supabase Auth để có profile; script backfill cho user đã tồn tại.
 3. Bổ sung SUPABASE_URL và SUPABASE_PUBLISHABLE_KEY vào backend/.env. Dùng publishable/legacy anon key, không cần service role API key cho xác minh token. DATABASE_URL chỉ ở server.
 4. Chuẩn bị role runtime không phải admin và kiểm tra grants/RLS phù hợp triển khai.
 5. Nếu giữ dữ liệu cũ: backup, tạo DB đích mới, ánh xạ ID chuỗi → UUID, xác định chủ sở hữu từng trip, trích workflow/artifact và dựng parent/latest. Không tự gán owner hay ép chuỗi tùy ý thành UUID. Chưa có công cụ chuyển dữ liệu trong đợt này.
@@ -60,7 +60,11 @@ audit lịch sử và **không** là parent của canonical schema. Canonical br
 đầu tại `20261105_canonical_baseline`: revision này kiểm SHA-256 rồi chạy đúng
 baseline `schema.sql`; migration tiếp theo chạy tuần tự trên branch `canonical`.
 
-- Database mới có Supabase Auth scaffold: `alembic upgrade canonical@head`.
+- Database mới có Supabase Auth scaffold: revision baseline cũ hiện có hash/header
+  không khớp schema.sql đã commit. Không bỏ kiểm tra hash hoặc sửa migration cũ.
+  Provision bằng baseline SQL trên database rỗng, kiểm chứng schema, rồi stamp
+  `20261105_canonical_baseline` và `alembic upgrade canonical@head`.
+  Nếu đã áp cả hai SQL migrations, kiểm chứng schema trước khi stamp head.
 - Database canonical đã tồn tại ở đúng `schema.sql` nhưng **chưa** có migration
   mới: backup và kiểm chứng cột/constraint hiện hữu, rồi mới
   `alembic stamp 20261105_canonical_baseline` và
@@ -75,6 +79,25 @@ baseline `schema.sql`; migration tiếp theo chạy tuần tự trên branch `ca
 `20261105_canonical_baseline` không hỗ trợ downgrade vì rollback sẽ phá hủy
 canonical schema. `20261107_clarification_round_kinds` chỉ downgrade khi chưa
 có `destination_choice` history hoặc destination state không-default.
+
+`20261107_canonical_episodes` chạy chính SQL migration Supabase, để hai đường
+triển khai không lệch. Downgrade bị từ chối để giữ lịch sử canonical. Alembic env
+dùng version_num varchar(128), vì revision đã commit trước đó vượt 32 ký tự.
+Migration chỉ bổ sung schema; không tạo question identity hoặc delegation giả
+cho legacy. Legacy counters được giữ khi explicit adoption tạo episode đầu tiên.
+
+Repository `ClarificationRepository` cung cấp `start_episode`, `issue`, `answer`,
+`close_episode`, `claim_final_resolve`, `complete_final_resolve` và
+`new_workflow_after_failed`. Caller giữ transaction; các operation dùng savepoint
+và lock workflow. Commit final-resolve claim **trước** khi gọi provider. Nếu nhận
+acquired=False sau restart, reconcile theo operation ID hoặc dùng completed result;
+không gọi lại provider như một resolve mới. Đây không phải bảo đảm exactly-once
+cho external API khi provider chưa hỗ trợ idempotency/reconciliation.
+
+Canonical sync/save_graph kiểm tra dữ liệu phải khớp relational records. Issuance
+và answer cập nhật graph snapshot hiện hữu trong cùng transaction. Legacy sync còn
+được giữ để runtime cũ hoạt động; nó không nâng question legacy thành actionable.
+Orchestrator/parser/Chat chưa được chuyển sang API canonical trong ba commit này.
 
 ## Kiểm tra local
 

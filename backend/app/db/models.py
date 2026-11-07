@@ -92,10 +92,13 @@ class WorkflowRequestRecord(Base):
     max_destination_rounds: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('2'))
     retry_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('0'))
     graph_snapshot: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    active_episode_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()'))
     updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()'), server_onupdate=sa.FetchedValue())
     __table_args__ = (
         sa.UniqueConstraint('request_id', 'trip_id'),
+        sa.ForeignKeyConstraint(['request_id', 'active_episode_id'],
+            ['destination_episodes.request_id', 'destination_episodes.episode_id'], name='workflow_active_episode_fk', use_alter=True),
         sa.CheckConstraint('max_destination_rounds >= 0 AND destination_round <= max_destination_rounds',
                            name='workflow_requests_destination_round_limit_check'),
         sa.Index('workflow_requests_trip_idx', 'trip_id'),
@@ -103,6 +106,59 @@ class WorkflowRequestRecord(Base):
     trip: Mapped["TripRecord"] = relationship(foreign_keys=[trip_id])
 
     artifacts: Mapped[list["WorkflowArtifactRecord"]] = relationship(foreign_keys="WorkflowArtifactRecord.request_id", viewonly=True)
+
+class DestinationEpisodeRecord(Base):
+    __tablename__ = 'destination_episodes'
+    episode_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    request_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('workflow_requests.request_id', ondelete='CASCADE'), nullable=False)
+    status: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=sa.text("'active'"))
+    destination_round: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('0'))
+    max_destination_rounds: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('2'))
+    selection_policy: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    final_resolve_status: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=sa.text("'not_started'"))
+    final_resolve_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True, unique=True)
+    final_resolve_result: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, server_default=sa.text('clock_timestamp()'))
+    __table_args__ = (
+        sa.UniqueConstraint('request_id', 'episode_id'),
+        sa.Index('destination_episodes_request_idx', 'request_id'),
+    )
+
+
+class ClarificationQuestionRecord(Base):
+    __tablename__ = 'clarification_questions'
+    question_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    request_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('workflow_requests.request_id', ondelete='CASCADE'), nullable=False)
+    episode_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    counter_group: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    round: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    status: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, server_default=sa.text('clock_timestamp()'))
+    __table_args__ = (
+        sa.UniqueConstraint('request_id', 'episode_id', 'question_id'),
+        sa.UniqueConstraint('episode_id', 'counter_group', 'round'),
+        sa.ForeignKeyConstraint(['request_id', 'episode_id'], ['destination_episodes.request_id', 'destination_episodes.episode_id'], ondelete='CASCADE'),
+        sa.Index('clarification_questions_request_idx', 'request_id'),
+        sa.Index('clarification_questions_open_idx', 'episode_id', unique=True, postgresql_where=sa.text("status = 'open'")),
+    )
+
+
+class ClarificationAnswerRecord(Base):
+    __tablename__ = 'clarification_answers'
+    answer_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    request_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('workflow_requests.request_id', ondelete='CASCADE'), nullable=False)
+    episode_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    question_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, unique=True)
+    payload: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, server_default=sa.text('clock_timestamp()'))
+    __table_args__ = (
+        sa.ForeignKeyConstraint(['request_id', 'episode_id', 'question_id'],
+            ['clarification_questions.request_id', 'clarification_questions.episode_id', 'clarification_questions.question_id'], ondelete='CASCADE'),
+        sa.Index('clarification_answers_request_idx', 'request_id'),
+    )
+
 
 class WorkflowArtifactRecord(Base):
     __tablename__ = "workflow_artifacts"

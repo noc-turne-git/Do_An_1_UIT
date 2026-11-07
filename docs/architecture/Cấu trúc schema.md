@@ -210,16 +210,16 @@ Những trường cần xác nhận lại nếu ko có
 
 | Trường | Điều kiện bắt buộc |
 | --- | --- |
-| destination.city / destination.selection_mode | Phải xác định được điểm đến hoặc ý định để Agent A lựa chọn |
+| destination.city / destination.selection_intent | EXPLICIT cần điểm user chỉ định; ANY cần authority delegated với provenance user. selection_mode không cấp quyền lựa chọn. |
 | trip.start_date và trip.end_date | Phải xác định được khoảng thời gian chuyến đi |
 | travelers.adults và travelers.children | Phải xác định được quy mô đoàn, ít nhất theo cách hiểu đã được xác nhận hoặc quy tắc mặc định được người dùng chấp nhận |
 | preferences.interests, preferences.pace, preferences.transport_modes | Cần để Agent B chấm mức phù hợp và Constraint Planner đặt nhịp, phương tiện; thiếu thì hỏi lại, hết lượt hỏi thì dùng mặc định của hệ thống (source = default) |
 | budget.amount và budget.scope | Bắt buộc nếu hệ thống phải bảo đảm giới hạn ngân sách theo yêu cầu thiết kế |
 
 Quy tắc xác nhận lại:
-Hỏi tối đa 3 lần cho một yêu cầu lập lịch trình
-→ Hết 3 lần, xử lí giá trị mặc định (source = default). Trạng thái hỏi lại (pending_fields, pending_questions, clarification_round, answers_history) được quản lý ở WorkflowState, mục 9.2
-Nếu hỏi lại nhưng người dùng bảo “chưa biết” ,.... thì để giá trị null,, meta - source: user và không hỏi lại
+trip_request có tối đa 3 lượt; destination_info và destination_choice dùng chung 2 lượt theo episode.
+Hết budget TripRequest chỉ áp defaults được cho phép; ngày, adults và city explicit không default.
+Declared unknown giữ null nhưng không bỏ qua các field never-default. Destination áp authority/final resolve theo [policy canonical](../ai/CLARIFICATION_POLICY.md).
 Phân chia LLM / CODE trong bước này
 
 | Việc | Ai làm |
@@ -387,10 +387,10 @@ Bốn giá trị selection_status (CODE chốt, LLM chỉ đề xuất)
 
 | Trạng thái | Khi nào | Orchestrator làm |
 | --- | --- | --- |
-| selected | Chọn được 1 khu vực | Đi tiếp Constraint Planner |
-| needs_user_choice | ≥ 2 ứng viên, chưa chọn được 1 | Thêm destination.city vào pending_fields, hỏi người dùng |
-| no_valid_candidate | Không còn ứng viên hợp lệ | Thêm destination.* vào pending_fields, hỏi đổi điều kiện |
-| pending_fields (trong WorkflowState) | Thiếu thông tin | Gộp missing_fields vào pending_fields |
+| selected | Resolve được khu vực với authority hợp lệ | Đi tiếp Constraint Planner |
+| needs_user_choice | Có ít nhất 1 ứng viên nhưng cần user chọn/xác nhận | Issued destination_choice với option snapshot |
+| no_valid_candidate | Không còn ứng viên hợp lệ | Dùng structured recovery fields/proposal; không tự đổi constraint |
+| needs_more_info | Thiếu thông tin | Dùng information_requests để phân loại purpose và budget |
 
 ### 5. Kiểm tra kết quả (6 check)
 
@@ -1562,8 +1562,8 @@ Mỗi lần người dùng trả lời, CODE cập nhật TripRequest, xác đ�
 | --- | --- | --- |
 | pending_fields | CODE | Đường dẫn các trường còn thiếu, cùng cú pháp với meta.field_sources (ví dụ trip.start_date), lấy từ danh sách trường bắt buộc ở mục 2. Một trường được tính là thiếu khi giá trị là null và source chưa phải user (người dùng đã trả lời "chưa biết" thì null kèm source = user, không hỏi lại). |
 | pending_questions | LLM soạn, CODE kiểm tra | Mỗi phần tử có question và fields (các trường mà câu hỏi nhắm tới). CODE kiểm tra fields chỉ nằm trong pending_fields và mọi trường thiếu đều được ít nhất một câu bao phủ. Một câu có thể gộp nhiều trường, như ví dụ trên. |
-| clarification_round | Orchestrator | Số lượt hỏi đã gửi cho yêu cầu này, bắt đầu từ 0 và tăng 1 mỗi lần gửi câu hỏi. Giá trị 1 trong ví dụ nghĩa là lượt hỏi đầu tiên đang chờ trả lời. |
-| max_clarification_rounds | Cấu hình | Bằng 3, đúng quy tắc ở mục 2: tối đa 3 lần hỏi cho một yêu cầu lập lịch trình. |
+| clarification_round | Persistence/Orchestrator | Số identity câu hỏi trip_request đã issued, bắt đầu 0. Retry cùng ID không tăng. Destination dùng counter riêng của episode. |
+| max_clarification_rounds | Cấu hình | Tối đa 3 lượt trip_request; không áp cho destination_info/choice. |
 | answers_history | CODE | Mỗi lượt hỏi một bản ghi: round, asked_fields, question, answer_raw, resolved_fields (trường đã có giá trị), declared_unknown_fields (trường người dùng nói chưa biết). Được đưa vào prompt soạn câu hỏi để LLM không lặp lại câu cũ. |
 
 Vòng lặp hỏi lại

@@ -95,10 +95,10 @@ Limits persist across explicit resumes:
   owned by a destination episode. Count only newly persisted question identities.
   Retry does not count; the second open question can still be answered. The current
   graph counter increments on Agent A execution are a known runtime gap to fix next.
-- The deterministic branch order is: if `pending_fields` is empty, invoke
-  Destination Agent; if it is non-empty, ask the user while its applicable
-  counter remains below its limit, otherwise apply the applicable default/fail
-  policy. It is never the reverse.
+- Canonical routing first accepts an answer to an open question, even at the
+  budget limit. With no open question, use the applicable purpose budget for new
+  issuance or final resolve/default/fail. A persisted final resolve must never be
+  rerun merely because pending_fields is empty. This routing is planned.
 - After TripRequest clarification exhaustion, only configured defaults apply.
   `trip.start_date`, `trip.end_date`, `travelers.adults`, and
   `destination.city` when explicit never default; unresolved ones fail. See
@@ -131,8 +131,9 @@ constraints are never automatically changed.
   dependencies, parallel execution and automatic dependency discovery are not
   supported by the existing component protocols.
 - A user change after `completed` resumes the same request under the 9.4
-  policy (**planned**): reset `retry_count`, `clarification_round`, and
-  `destination_round` to zero, invalidate affected downstream outputs, and
+  policy (**planned**): reset `retry_count` and `clarification_round`, create a
+  fresh episode with destination_round=0 if destination selection restarts,
+  invalidate affected downstream outputs, and
   write fresh artifact IDs while retaining immutable historical artifacts.
   Failed runs are always terminal (lifecycle B). An explicit destination after failure
   requires both a new workflow request_id and a new destination episode_id.

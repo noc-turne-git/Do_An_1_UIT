@@ -18,7 +18,8 @@ duy nhất không cấp quyền chọn cho UNKNOWN/UNSPECIFIED. selection_proven
 source, evidence user và question_id/episode_id nếu quyết định từ câu trả lời.
 Legacy thiếu intent/authority dùng UNSPECIFIED/none, không suy ra từ city hay
 field_sources. User chọn option tạo EXPLICIT/user. Default theo ANY giữ intent
-ANY và provenance default, không giả thành user chọn.
+ANY; DestinationResult.selection_provenance ghi default, không giả thành user chọn.
+Destination.selection_provenance giữ bằng chứng user đã cấp delegation.
 
 ## Ba question kinds, phân loại theo mục đích
 
@@ -92,9 +93,10 @@ phải dùng budget đã biết, không reset budget legacy để tiếp tục h
 
 | Mốc | Trạng thái |
 | --- | --- |
-| Commit 1 | Policy và tài liệu thống nhất; chưa thay runtime |
-| Commit 2 | Contracts, invariants, serialization và JSON Schema |
-| Commit 3 | Migration mới, atomic episode/question/answer storage, lifecycle factory, final-resolve persistence; kiểm chứng PostgreSQL riêng |
+| Commit 1 — implemented | Policy và tài liệu thống nhất; chưa thay runtime |
+| Commit 2 — implemented | Contracts, invariants, serialization và JSON Schema |
+| Commit 3 — implemented | Migration mới, atomic episode/question/answer storage, lifecycle factory, final-resolve persistence; kiểm chứng PostgreSQL riêng |
 | Planned sau Commit 3 | Parser intent, Agent A routing, sửa graph tăng counter mỗi lần Agent A chạy, state machine gọi issuance/final resolve, Chat integration |
 
 Ba commit nền tảng không có nghĩa clarification flow đã hoàn tất end-to-end.
+Kết quả kiểm chứng và giới hạn migration cũ: [CLARIFICATION_VERIFICATION.md](CLARIFICATION_VERIFICATION.md).

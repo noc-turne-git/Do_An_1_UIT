@@ -409,7 +409,7 @@ def test_config_environment_overrides_dotenv(tmp_path, monkeypatch):
 
 def test_orm_metadata_postgresql_ddl_and_relationships():
     configure_mappers()
-    assert len(Base.metadata.tables) == 20
+    assert len(Base.metadata.tables) == 23
     assert 'workflows' not in Base.metadata.tables and 'artifacts' not in Base.metadata.tables
     for table in Base.metadata.sorted_tables:
         assert 'CREATE TABLE' in str(CreateTable(table).compile(dialect=postgresql.dialect()))

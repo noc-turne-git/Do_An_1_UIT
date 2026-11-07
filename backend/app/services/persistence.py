@@ -17,6 +17,11 @@ TYPES = dict(request_parser='trip_request', destination_agent='destination_resul
 class WorkflowPersistence(OwnedRepository):
     def save_graph(self, run):
         row = self.request(run.state.request_id, lock=True)
+        if row.trip_id != run.state.trip_id or row.status != run.state.status:
+            from shared.errors import ApplicationError
+            raise ApplicationError('planning_input_inconsistent', 'Snapshot and persisted workflow differ; failed is terminal')
+        if row.active_episode_id:
+            self._validate_canonical(run)
         row.graph_snapshot = run.model_dump(mode="json")
         self.session.flush()
 
@@ -29,7 +34,25 @@ class WorkflowPersistence(OwnedRepository):
         run = GraphRun.model_validate(row.graph_snapshot)
         if run.state.request_id != request_id or run.state.trip_id != row.trip_id or run.state.status != row.status:
             raise ApplicationError("planning_input_inconsistent", "Graph snapshot and request differ")
+        if row.active_episode_id:
+            self._validate_canonical(run)
         return run
+
+    def _validate_canonical(self, run):
+        from app.repositories.clarifications import ClarificationRepository, conflict
+        repo = ClarificationRepository(self.session, self.user_id)
+        request = self.request(run.state.request_id)
+        episode = repo.contract(repo.episode(request.request_id))
+        if run.state.destination_episode != episode or run.state.clarification_round != request.clarification_round:
+            conflict('Snapshot differs from persisted canonical budget/episode')
+        if run.pending_questions != repo.questions(request.request_id, open_only=True):
+            conflict('Snapshot differs from issued question snapshot')
+        fields = list(dict.fromkeys(f for q in run.pending_questions for f in q.fields))
+        if run.state.pending_fields != fields or (fields and run.state.status != 'clarifying'):
+            conflict('Snapshot pending state differs from issued questions')
+        canonical_answers = [a for a in run.answers_history if a.question_id is not None]
+        if canonical_answers != repo.answers(request.request_id):
+            conflict('Snapshot differs from persisted canonical answers')
 
     def save(self, run, step, value, artifact_id):
         # A node is atomic even when Python mapping raises before DB commit.
@@ -52,15 +75,30 @@ class WorkflowPersistence(OwnedRepository):
             results.validation(request_id, artifact, run.state.artifacts.itinerary_id, value)
 
     def sync(self, run):
+        with self.session.begin_nested():
+            self._sync(run)
+
+    def _sync(self, run):
         RequestRepository(self.session, self.user_id).update_projection(run.state)
         request_id = run.state.request_id
+        if run.state.destination_episode:
+            self._validate_canonical(run)
+        else:
+            self._sync_legacy_questions(run)
+        self._sync_attempts_errors(run)
+        self.session.flush()
+
+    def _sync_legacy_questions(self, run):
+        request_id = run.state.request_id
+        if any(q.status != 'legacy' for q in run.pending_questions) or any(a.question_id for a in run.answers_history):
+            raise ValueError('Canonical questions require explicit issuance and episode ownership')
         rounds = {(r.kind, r.round): r for r in self.session.scalars(select(ClarificationRoundRecord).where(
             ClarificationRoundRecord.request_id == request_id))}
         question_kinds = {question.kind for question in run.pending_questions}
         if len(question_kinds) > 1:
             raise ValueError('A clarification batch must have one question kind')
         question_kind = next(iter(question_kinds), 'trip_request')
-        question_round = (run.state.destination_round if question_kind == 'destination_choice'
+        question_round = (run.state.destination_round if question_kind in {'destination_choice', 'destination_info'}
                           else run.state.clarification_round)
         round_key = (question_kind, question_round)
         if run.state.status == 'clarifying' and round_key not in rounds:
@@ -86,6 +124,8 @@ class WorkflowPersistence(OwnedRepository):
                         field_path=field, question=question.question, status='open')
                     self.session.add(row)
                     pending.append(row)
+    def _sync_attempts_errors(self, run):
+        request_id = run.state.request_id
         stored_attempts = set(self.session.scalars(select(SolverAttemptRecord.attempt_no).where(
             SolverAttemptRecord.request_id == request_id)))
         for attempt in run.attempts:
@@ -103,6 +143,15 @@ class WorkflowPersistence(OwnedRepository):
         from shared.contracts import WorkflowState, ArtifactReferences, AnswerHistory, Attempt, WorkflowError
         from ai.orchestration.workflow_state import WorkflowRun, STEPS, REFS
         request = self.request(request_id, lock=True)
+        episode = None
+        canonical_questions = []
+        canonical_answers = []
+        if request.active_episode_id:
+            from app.repositories.clarifications import ClarificationRepository
+            canonical = ClarificationRepository(self.session, self.user_id)
+            episode = canonical.contract(canonical.episode(request_id))
+            canonical_questions = canonical.questions(request_id, open_only=True)
+            canonical_answers = canonical.answers(request_id)
         artifacts = list(self.session.scalars(select(WorkflowArtifactRecord).where(
             WorkflowArtifactRecord.request_id == request_id)))
         latest = {a.artifact_type: a.artifact_id for a in artifacts if a.is_latest}
@@ -122,13 +171,15 @@ class WorkflowPersistence(OwnedRepository):
             completed_steps=[step for step in STEPS if step in TYPES and TYPES[step] in latest],
             artifacts=ArtifactReferences(**refs), clarification_round=request.clarification_round,
             max_clarification_rounds=request.max_clarification_rounds, destination_round=request.destination_round,
-            max_destination_rounds=request.max_destination_rounds,
-            retry_count=request.retry_count, pending_fields=[p.field_path for p in pending]),
+            max_destination_rounds=request.max_destination_rounds, destination_episode=episode,
+            retry_count=request.retry_count, pending_fields=(list(dict.fromkeys(f for q in canonical_questions for f in q.fields))
+                if episode else [p.field_path for p in pending])),
             artifacts={a.artifact_id: a.payload for a in artifacts},
-            pending_questions=[dict(question=p.question, fields=[p.field_path], kind=pending_kind) for p in pending],
+            pending_questions=(canonical_questions if episode else
+                [dict(question=p.question, fields=[p.field_path], kind=pending_kind) for p in pending]),
             answers_history=[AnswerHistory(round=r.round, kind=r.kind, asked_fields=r.asked_fields, question=r.question,
                 answer_raw=r.answer_raw, resolved_fields=r.resolved_fields or [],
-                declared_unknown_fields=r.declared_unknown_fields or []) for r in rounds if r.answer_raw is not None])
+                declared_unknown_fields=r.declared_unknown_fields or []) for r in rounds if r.answer_raw is not None] + canonical_answers)
         run.attempts = [Attempt(attempt=a.attempt_no, step=a.step, random_seed=a.random_seed,
             time_limit_seconds=a.time_limit_seconds, result=a.result, violations=a.violations,
             itinerary_id=a.itinerary_id, validation_result_id=a.validation_result_id)
