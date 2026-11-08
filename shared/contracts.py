@@ -288,6 +288,7 @@ class DestinationResult(Contract):
     recovery: DestinationRecovery | None = None
     selected_candidate_id: NonEmpty | None = None
     selection_provenance: SelectionProvenance | None = None
+    selection_method: Literal['USER_EXPLICIT', 'USER_CHOICE', 'DELEGATED', 'ANY_DEFAULT'] | None = None
 
     @model_validator(mode="after")
     def selection_consistent(self):
@@ -311,8 +312,7 @@ class DestinationResult(Contract):
         """Legacy results remain readable, but cannot drive routing without purpose."""
         if self.selection_status == "needs_more_info" and not self.information_requests:
             raise ValueError("needs_more_info requires structured information_requests")
-        if self.selection_status == "no_valid_candidate" and self.recovery is None:
-            raise ValueError("no_valid_candidate requires structured recovery")
+        # No recovery is a valid terminal result; it must never invent a question.
         return self
 
 
@@ -833,6 +833,7 @@ class AnswerHistory(Model):
     selected_option_id: NonEmpty | None = None
     confirmed_proposal_id: NonEmpty | None = None
     constraint_confirmed: StrictBool | None = None
+    destination_update: Destination | None = None
 
     @model_validator(mode="after")
     def linked_identity(self):
@@ -845,6 +846,15 @@ class AnswerHistory(Model):
             raise ValueError("constraint confirmation requires proposal identity and decision")
         if (self.selected_option_id or self.confirmed_proposal_id) and self.answer_id is None:
             raise ValueError("selection/confirmation requires canonical identity")
+        if self.destination_update is not None:
+            d = self.destination_update
+            if self.kind != 'destination_choice' or self.answer_id is None or self.selected_option_id:
+                raise ValueError('destination update requires a canonical non-option choice response')
+            if not ((d.selection_intent == 'EXPLICIT' and d.selection_authority == 'user' and d.city and d.city.strip())
+                    or (d.selection_intent in {'ANY', 'ANY_DESTINATION', 'DELEGATE_SELECTION'}
+                        and d.selection_authority == 'delegated')
+                    or (d.selection_intent in {'USER_UNKNOWN', 'UNKNOWN'} and d.selection_authority == 'none')):
+                raise ValueError('destination update requires a parser-confirmed intent')
         return self
 
     def validate_for(self, question: PendingQuestion):
@@ -857,8 +867,14 @@ class AnswerHistory(Model):
             raise ValueError("answer fields outside question")
         if set(self.resolved_fields) & set(self.declared_unknown_fields):
             raise ValueError("field cannot be resolved and unknown")
-        if question.kind == "destination_choice" and self.selected_option_id not in {o.option_id for o in question.options}:
-            raise ValueError("unknown or missing option")
+        if question.kind == 'destination_choice':
+            if self.selected_option_id is not None:
+                if self.selected_option_id not in {o.option_id for o in question.options}:
+                    raise ValueError('unknown option')
+                if self.destination_update is not None:
+                    raise ValueError('option and new destination are mutually exclusive')
+            elif self.destination_update is None and 'destination.city' not in self.declared_unknown_fields:
+                raise ValueError('missing option or parser-confirmed destination response')
         if question.constraint_proposal:
             if self.confirmed_proposal_id != question.constraint_proposal.proposal_id or self.constraint_confirmed is None:
                 raise ValueError("proposal requires explicit confirmation decision")
@@ -891,10 +907,12 @@ class DestinationEpisode(SelectionPolicy):
         """A permission gate, not an orchestration side effect."""
         self.consistent()
         self.authority_is_explicit()
-        if self.status == 'failed' or self.selection_intent not in {"ANY", "ANY_DESTINATION", "DELEGATE_SELECTION"} or self.selection_authority != "delegated" or self.final_resolve_status != "completed":
+        if self.status == 'failed' or self.selection_intent not in {"ANY", "ANY_DESTINATION"} or self.selection_authority != "delegated" or self.final_resolve_status != "completed":
             raise ValueError("default requires delegated ANY after final resolve")
         candidates = self.final_resolve_result.candidate_regions
-        ranked = [c for c in candidates if c.rank == 1 and c.candidate_id and c.reason.strip()]
+        if self.final_resolve_result.selection_status not in {'selected', 'needs_user_choice'} or self.final_resolve_result.missing_fields:
+            raise ValueError('final resolve remains unresolved')
+        ranked = [c for c in candidates if c.rank == 1 and c.candidate_id and c.city.strip() and c.reason.strip()]
         if len(ranked) != 1:
             raise ValueError("no unique valid rank 1 candidate")
         return ranked[0]

@@ -55,6 +55,8 @@ def specifications(result: DestinationResult) -> list[QuestionSpec]:
                 for info in result.information_requests]
     if result.selection_status == 'no_valid_candidate':
         recovery = result.recovery
+        if recovery is None:
+            return []
         return [QuestionSpec('destination_info', tuple(recovery.fields),
                              constraint_proposal=recovery.constraint_proposal)]
     return []

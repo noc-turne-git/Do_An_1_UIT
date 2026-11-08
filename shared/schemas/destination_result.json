@@ -386,6 +386,24 @@
         }
       ],
       "default": null
+    },
+    "selection_method": {
+      "anyOf": [
+        {
+          "enum": [
+            "USER_EXPLICIT",
+            "USER_CHOICE",
+            "DELEGATED",
+            "ANY_DEFAULT"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Selection Method"
     }
   },
   "required": [

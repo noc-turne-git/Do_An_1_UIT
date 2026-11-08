@@ -66,7 +66,10 @@ def test_destination_unknown_with_delegation_and_explicit_change():
 
 
 def test_legacy_mode_does_not_grant_selection_and_intent_change_keeps_data():
-    legacy = complete()
+    data = complete().model_dump()
+    for key in ('selection_intent', 'selection_authority', 'selection_provenance'):
+        data['destination'].pop(key, None)
+    legacy = TripRequest.model_validate(data)
     assert legacy.destination.selection_intent == 'UNSPECIFIED'
     request = apply_changes(legacy, output('destination.selection_mode', 'implicit'))
     assert request.destination.selection_authority == 'none'

@@ -36,6 +36,8 @@ def result():
 def test_legacy_does_not_grant_authority_or_actionability():
     for mode in ['implicit', 'explicit', 'ambiguous']:
         data = fixture('trip_request')['destination'] | dict(selection_mode=mode)
+        for key in SelectionPolicy.model_fields:
+            data.pop(key, None)
         dest = Destination.model_validate(data)
         assert (dest.selection_intent, dest.selection_authority) == ('UNSPECIFIED', 'none')
     q = PendingQuestion(question='Choose', fields=['destination.city'], kind='destination_choice')
@@ -64,10 +66,13 @@ def test_any_requires_user_evidence_and_completed_final_resolve():
     episode = DestinationEpisode.model_validate(episode.model_dump() | dict(
         final_resolve_status='completed', final_resolve_id=uuid4(), final_resolve_result=result()))
     assert episode.default_candidate().candidate_id == 'c1'  # not array position zero
-    for intent in ['ANY_DESTINATION', 'DELEGATE_SELECTION']:
+    for intent in ['ANY_DESTINATION']:
         delegated = DestinationEpisode.model_validate(episode.model_dump() | dict(
             selection_intent=intent))
         assert delegated.default_candidate().candidate_id == 'c1'
+    with pytest.raises(ValueError):
+        DestinationEpisode.model_validate(episode.model_dump() | dict(
+            selection_intent='DELEGATE_SELECTION')).default_candidate()
     for intent in ['UNKNOWN', 'UNSPECIFIED']:
         other = DestinationEpisode.model_validate(episode.model_dump() | dict(
             selection_intent=intent, selection_authority='none', selection_provenance=None))

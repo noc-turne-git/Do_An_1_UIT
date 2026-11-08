@@ -18,12 +18,15 @@ from shared.validation import validate_trip_request
 
 from shared.errors import ApplicationError
 from ai.agents.runtime.context import execution_identity
-from shared.contracts import AnswerHistory, Attempt, Model, TripRequest, WorkflowState
+from shared.contracts import (AnswerHistory, Attempt, Model, TripRequest, WorkflowState,
+                              DestinationResult, DestinationEpisode, SelectionPolicy, PendingQuestion)
 from ai.planning.constraint_planner import ConstraintPlanningError
 from ai.orchestration.workflow_state import OUTPUTS, REFS, STEPS, StateMachine, WorkflowRun
 from ai.orchestration.clarification_policy import ClarificationPolicy
 from ai.orchestration.clarification_questions import QuestionSpec
 from ai.orchestration.trip_request_defaults import apply_trip_defaults
+from ai.orchestration.destination_resolution import ANY_INTENTS, authorize_selection, can_select, reject
+from ai.orchestration.clarification_answers import accept_answer, option_request, InvalidAnswer
 
 
 class DataRequirement(Exception):
@@ -37,6 +40,10 @@ class DataRequirement(Exception):
         self.provider = provider
         self.reason = reason
         self.exclude_place_ids = list(exclude_place_ids)
+
+
+class FinalResolvePending(Exception):
+    """A durable claim must be reconciled, never started a second time."""
 
 
 class GraphLimits(Model):
@@ -65,6 +72,8 @@ class GraphRun(WorkflowRun):
     limits: GraphLimits | None = None
     trip_request_fields: list[str] = Field(default_factory=list)
     destination_info_fields: list[str] = Field(default_factory=list)
+    awaiting_final_resolve: bool = False
+    selection_question: PendingQuestion | None = None
 
     @field_validator("outputs", mode="before")
     @classmethod
@@ -80,6 +89,7 @@ class GraphState(TypedDict):
     current_date: date
     answer_raw: str | None
     previous_request: TripRequest | None
+    answer: AnswerHistory | None
 
 
 class LangGraphOrchestrator:
@@ -110,6 +120,8 @@ class LangGraphOrchestrator:
     def _route(self, state):
         """Called by LangGraph after each node; no component is invoked here."""
         r = state["run"]
+        if r.awaiting_final_resolve:
+            return END
         if r.state.status in {"completed", "failed", "clarifying", "awaiting_relaxation"}:
             return END
         if r.stop_reason or r.transitions >= self.limits.max_transitions:
@@ -228,6 +240,17 @@ class LangGraphOrchestrator:
                 if step in {"planning_input_builder", "planning_engine", "validator"} and value.trip_id != r.state.trip_id:
                     raise ApplicationError("planning_input_inconsistent", "Trip IDs differ")
                 if step == 'request_parser':
+                    question = next((q for q in r.pending_questions if q.status == 'open'), None)
+                    if question is not None:
+                        value, answer = accept_answer(state['previous_request'], value, question,
+                            state['answer_raw'], state.get('answer'))
+                        if self.persistence:
+                            self.persistence.answer_question(r, answer)
+                        r.answers_history.append(answer)
+                        if answer.selected_option_id:
+                            r.selection_question = question.model_copy(deep=True)
+                        sm.update(pending_questions=[], pending_fields=[])
+                    self._update_episode_policy(r, value)
                     fields = list(dict.fromkeys([*r.trip_request_fields,
                         *(p for p in value.missing_fields if not p.startswith('destination.')
                           and p not in r.destination_info_fields)]))
@@ -236,9 +259,17 @@ class LangGraphOrchestrator:
                             policy=self.clarification_policy,
                             exhausted=r.state.clarification_round >= r.state.max_clarification_rounds,
                             question_open=any(q.status == 'open' for q in r.pending_questions))
+                if step == 'destination_agent':
+                    value = self._destination_selection(r, value)
                 self._save(r, step, value)
                 self._outcome(r, step, value)
                 event["refs_after"] = r.state.artifacts.model_dump(mode="json")
+            except InvalidAnswer:
+                # No accepted answer, no counter/default/final-resolve transition.
+                r = state['run'].model_copy(deep=True)
+                StateMachine(r).update(status='clarifying')
+            except FinalResolvePending:
+                r.awaiting_final_resolve = True
             except SQLAlchemyError:
                 log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id,
                     step=step, error='persistence_error')
@@ -275,9 +306,62 @@ class LangGraphOrchestrator:
         destination, times = o.get("destination_agent"), o.get("constraint_planner")
         places = o.get("place_agent")
         if step == "request_parser":
-            return await c.request_parser.parse(state["request"].meta.raw_prompt, current_date=state["current_date"],
-                context={"trip_request": state["request"].model_dump(mode="json"), "answer_raw": state["answer_raw"]}, previous_request=state["previous_request"])
+            incoming = state['request']
+            question = next((q for q in r.pending_questions if q.status == 'open'), None)
+            answer = state.get('answer')
+            selected = answer.selected_option_id if answer else (
+                state['answer_raw'].strip() if question and question.kind == 'destination_choice'
+                and state['answer_raw'] and state['answer_raw'].strip() in {o.option_id for o in question.options}
+                else None)
+            if selected:
+                incoming = option_request(incoming, question, selected)
+            return await c.request_parser.parse(incoming.meta.raw_prompt, current_date=state["current_date"],
+                context={"trip_request": incoming.model_dump(mode="json"), "answer_raw": state["answer_raw"],
+                         'pending_question': question.model_dump(mode='json') if question else None},
+                previous_request=state["previous_request"])
         if step == "destination_agent":
+            episode = r.state.destination_episode
+            if (request.destination.selection_intent in ANY_INTENTS and can_select(request.destination)
+                    and r.state.destination_round >= r.state.max_destination_rounds):
+                if any(q.status == 'open' for q in r.pending_questions):
+                    reject('Answer the open question before final resolution')
+                if episode is None:
+                    reject('Final resolution requires a canonical episode')
+                if self.persistence:
+                    episode = self.persistence.refresh_episode(r)
+                    StateMachine(r).update(destination_episode=episode)
+                if episode.final_resolve_status == 'completed':
+                    return episode.final_resolve_result
+                if episode.final_resolve_status == 'claimed':
+                    raise FinalResolvePending()
+                operation_id = uuid4()
+                if self.persistence:
+                    episode, acquired = self.persistence.claim_final_resolve(r, operation_id)
+                else:
+                    episode = DestinationEpisode.model_validate(episode.model_dump() | dict(
+                        final_resolve_id=operation_id, final_resolve_status='claimed'))
+                    acquired = True
+                StateMachine(r).update(destination_episode=episode)
+                if not acquired:
+                    raise FinalResolvePending()
+                identity = execution_identity.get() or {}
+                token = execution_identity.set(identity | {'metadata': {
+                    **identity.get('metadata', {}), 'final_resolve_id': str(operation_id),
+                    'final_resolve': True}})
+                try:
+                    raw = await c.destination_agent.select(request)
+                except Exception as exc:
+                    raise FinalResolvePending() from exc
+                finally:
+                    execution_identity.reset(token)
+                result = DestinationResult.model_validate(raw).require_canonical_recovery()
+                if self.persistence:
+                    episode = self.persistence.complete_final_resolve(r, operation_id, result)
+                else:
+                    episode = DestinationEpisode.model_validate(episode.model_dump() | dict(
+                        final_resolve_status='completed', final_resolve_result=result))
+                StateMachine(r).update(destination_episode=episode)
+                return result
             return await c.destination_agent.select(request)
         if step == "constraint_planner":
             return await c.constraint_planner.build(request, destination, defaults=deepcopy(self.defaults))
@@ -293,6 +377,64 @@ class LangGraphOrchestrator:
             return await c.validator.validate(o["planning_engine"], o["planning_input_builder"])
         return await c.explainer.explain(o["planning_engine"], o["validator"])
 
+    def _update_episode_policy(self, r, request):
+        episode = r.state.destination_episode
+        if episode is None:
+            return
+        policy = SelectionPolicy.model_validate(request.destination.model_dump(
+            include=set(SelectionPolicy.model_fields)))
+        if self.persistence:
+            episode = self.persistence.update_episode_policy(r, policy)
+        else:
+            episode = DestinationEpisode.model_validate(episode.model_dump() | policy.model_dump())
+        StateMachine(r).update(destination_episode=episode)
+
+    def _destination_selection(self, r, value):
+        value.require_canonical_recovery()
+        request = r.outputs['request_parser']
+        episode = r.state.destination_episode
+        final = bool(episode and episode.final_resolve_status == 'completed'
+                     and request.destination.selection_intent in ANY_INTENTS)
+        if final or value.selection_status == 'selected' and can_select(request.destination):
+            question = r.selection_question
+            provenance = request.destination.selection_provenance
+            chosen = next((a for a in reversed(r.answers_history) if question
+                           and a.question_id == question.question_id and a.selected_option_id), None)
+            choice = bool(chosen and provenance and provenance.question_id == question.question_id)
+            selected = authorize_selection(request, value, final=final, user_choice=choice)
+            if choice:
+                option = next(o for o in question.options if o.option_id == chosen.selected_option_id)
+                selected.selected_candidate_id = option.candidate_id
+            return selected
+        return value
+
+    def _ask_destination(self, r, spec, request):
+        if any(q.status == 'open' for q in r.pending_questions):
+            return  # The last issued question remains actionable at the limit.
+        if spec.kind == 'trip_request':
+            r.trip_request_fields = list(dict.fromkeys([*r.trip_request_fields, *spec.fields]))
+            if r.state.clarification_round >= r.state.max_clarification_rounds:
+                updated = apply_trip_defaults(request, [spec], policy=self.clarification_policy,
+                    exhausted=True, question_open=False)
+                if updated == request:
+                    reject('Trip requirements remain unresolved after applying configured defaults')
+                self._invalidate(r, 'destination_agent')
+                self._save(r, 'request_parser', updated)
+                r.route_provider = 'destination_agent'
+                return
+        else:
+            if r.state.destination_round >= r.state.max_destination_rounds:
+                reject('Destination question budget exhausted without an authorized selection')
+            if spec.kind == 'destination_info':
+                r.destination_info_fields = list(dict.fromkeys([*r.destination_info_fields, *spec.fields]))
+            if spec.constraint_proposal:
+                from ai.orchestration.clarification_answers import read_path
+                data = request.model_dump(mode='json')
+                if any(read_path(data, path) != spec.constraint_proposal.current_values[path]
+                       for path in spec.constraint_proposal.fields):
+                    reject('Constraint proposal does not match the current request')
+        StateMachine(r, self.persistence).issue_question(spec, request=request)
+
     def _outcome(self, r, step, value):
         sm, o = StateMachine(r), r.outputs
         if step == "request_parser" and any(
@@ -304,31 +446,19 @@ class LangGraphOrchestrator:
             StateMachine(r, self.persistence).clarify(fields, request=value)
         elif (step == 'request_parser' and value.destination.selection_mode == 'explicit'
               and 'destination.city' in value.missing_fields):
-            from ai.orchestration.clarification_questions import QuestionSpec
-            StateMachine(r, self.persistence).issue_question(
-                QuestionSpec('destination_info', ('destination.city',)), request=value)
+            self._ask_destination(r, QuestionSpec('destination_info', ('destination.city',)), value)
         elif step == "destination_agent":
-            destination = o['request_parser'].destination
-            if (value.selection_status == 'selected' and destination.city and
-                    value.selected_region.city != destination.city):
-                raise ValueError('Selected destination differs from user input')
-            if (value.selection_status == 'selected' and not destination.city and
-                    destination.selection_intent in {'USER_UNKNOWN', 'UNKNOWN', 'UNSPECIFIED'}):
-                from ai.orchestration.clarification_questions import QuestionSpec
-                StateMachine(r, self.persistence).issue_question(
-                    QuestionSpec('destination_info', ('destination.city',)),
-                    request=o['request_parser'])
-            elif value.selection_status != "selected" or value.missing_fields:
+            request = o['request_parser']
+            if value.selection_status == 'selected' and not can_select(request.destination):
+                self._ask_destination(r, QuestionSpec('destination_info', ('destination.city',)), request)
+            elif value.selection_status != 'selected':
                 from ai.orchestration.clarification_questions import specifications
                 specs = specifications(value)
                 if not specs:
-                    raise ValueError('Destination result has no structured question purpose')
-                StateMachine(r, self.persistence).issue_question(
-                    specs[0], request=o['request_parser'])
-                if specs[0].kind == 'trip_request':
-                    r.trip_request_fields = list(dict.fromkeys([*r.trip_request_fields, *specs[0].fields]))
-                elif specs[0].kind == 'destination_info':
-                    r.destination_info_fields = list(dict.fromkeys([*r.destination_info_fields, *specs[0].fields]))
+                    reject('No valid destination and no concrete recovery fields')
+                if request.destination.selection_intent == 'DELEGATE_SELECTION' and value.selection_status == 'needs_user_choice':
+                    reject('Delegated resolution must select one destination; choice is forbidden')
+                self._ask_destination(r, specs[0], request)
         elif step == "place_agent":
             names = {p.place_id for p in value} | {p.name for p in value}
             if not value or not set(o["request_parser"].destination.must_visit) <= names:
@@ -376,9 +506,20 @@ class LangGraphOrchestrator:
             sm.update(status="completed")
 
     async def run(self, request: TripRequest, *, current_date: date, previous: GraphRun | None = None,
-                  answer_raw: str | None = None, trip_id=None, request_id=None):
+                  answer_raw: str | None = None, answer: AnswerHistory | None = None,
+                  trip_id=None, request_id=None):
         validate_trip_request(request.model_dump(mode='json'))
-        if previous and (previous.state.status == "failed" or answer_raw is None):
+        if answer is not None:
+            answer = AnswerHistory.model_validate(answer.model_dump())
+            if answer_raw is not None and answer_raw != answer.answer_raw:
+                raise InvalidAnswer('Answer text differs from its snapshot')
+            answer_raw = answer.answer_raw
+            question = next((q for q in previous.pending_questions if q.status == 'open'), None) if previous else None
+            if question is None:
+                raise InvalidAnswer('No open question for this answer')
+            answer.validate_for(question)
+        if previous and (previous.state.status == "failed" or answer_raw is None
+                         and previous.state.status in {'completed', 'clarifying', 'awaiting_relaxation'}):
             return previous.model_copy(deep=True)
         r = previous.model_copy(deep=True) if previous else GraphRun(state=WorkflowState(
             request_id=request_id or uuid4(), trip_id=trip_id or uuid4(), status="parsing",
@@ -389,11 +530,16 @@ class LangGraphOrchestrator:
         if previous and previous.limits:
             self.limits = previous.limits.model_copy(deep=True)
         r.limits = self.limits.model_copy(deep=True)
+        r.awaiting_final_resolve = False  # Refresh the durable operation on retry.
         old = r.outputs.get("request_parser")
         if previous:
+            question = next((q for q in previous.pending_questions if q.status == 'open'), None)
+            if question and (not previous.state.destination_episode or
+                    question.episode_id != previous.state.destination_episode.episode_id):
+                raise InvalidAnswer('Question does not belong to the active episode')
             r.user_updates.append(dict(event="user_update", answer_raw=answer_raw,
                                   previous_status=previous.state.status))
-            if previous.state.status == "clarifying":
+            if previous.state.status == "clarifying" and question is None:
                 resolved, unknown = [], []
                 data = request.model_dump()
                 for path in previous.state.pending_fields:
@@ -407,36 +553,23 @@ class LangGraphOrchestrator:
                         data["meta"]["field_sources"][path] = "user"
                         (resolved if node is not None else unknown).append(path)
                 request = TripRequest.model_validate(data)
-                question = next((q for q in previous.pending_questions if q.status == 'open'), None)
-                if question is not None:
-                    selected = (answer_raw.strip() if question.kind == 'destination_choice'
-                                and answer_raw.strip() in {o.option_id for o in question.options}
-                                else None)
-                    if question.kind == 'destination_choice' and selected is None:
-                        return previous.model_copy(deep=True)
-                    answer = AnswerHistory(round=question.round, kind=question.kind,
-                        asked_fields=question.fields, question=question.question,
-                        answer_raw=answer_raw, resolved_fields=resolved,
-                        declared_unknown_fields=unknown, answer_id=uuid4(),
-                        episode_id=question.episode_id, question_id=question.question_id,
-                        selected_option_id=selected)
-                    if self.persistence:
-                        self.persistence.answer_question(r, answer)
-                    r.answers_history.append(answer)
-                elif previous.pending_questions:
+                if previous.pending_questions:
                     r.answers_history.append(AnswerHistory(round=r.state.clarification_round or 1,
                         asked_fields=previous.state.pending_fields,
                         question=' '.join(q.question for q in previous.pending_questions),
                         answer_raw=answer_raw, resolved_fields=resolved,
                         declared_unknown_fields=unknown))
             # Parser owns changed user input; downstream artifacts are invalidated at entry.
-            r.route_provider, r.route_reason = "request_parser", "user_update"
+            if answer_raw is not None:
+                r.route_provider, r.route_reason = "request_parser", "user_update"
             r.final_result = None
             r.explanation = None
-            StateMachine(r).update(status="parsing", pending_fields=[], pending_questions=[])
+            StateMachine(r).update(status="parsing",
+                pending_fields=question.fields if question else [],
+                pending_questions=[question] if question else [])
         try:
             state = await self.graph.ainvoke(dict(run=r, request=request.model_copy(deep=True),
-                current_date=current_date, answer_raw=answer_raw, previous_request=deepcopy(old)),
+                current_date=current_date, answer_raw=answer_raw, answer=answer, previous_request=deepcopy(old)),
                 config={"recursion_limit": self.limits.max_transitions + 3})
         except NodeCancelledError as exc:
             # LangGraph must treat node-raised cancellation as a failure internally.

@@ -1,4 +1,187 @@
 {
+  "$defs": {
+    "Destination": {
+      "additionalProperties": false,
+      "properties": {
+        "selection_intent": {
+          "default": "UNSPECIFIED",
+          "enum": [
+            "EXPLICIT",
+            "ANY_DESTINATION",
+            "DELEGATE_SELECTION",
+            "USER_UNKNOWN",
+            "UNSPECIFIED",
+            "ANY",
+            "UNKNOWN"
+          ],
+          "title": "Selection Intent",
+          "type": "string"
+        },
+        "selection_authority": {
+          "default": "none",
+          "enum": [
+            "none",
+            "user",
+            "delegated"
+          ],
+          "title": "Selection Authority",
+          "type": "string"
+        },
+        "selection_provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SelectionProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "selection_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "explicit",
+                "implicit",
+                "ambiguous"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Selection Mode"
+        },
+        "city": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "City"
+        },
+        "province": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Province"
+        },
+        "country": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Country"
+        },
+        "candidate_cities": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Candidate Cities",
+          "type": "array"
+        },
+        "preferred_areas": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Preferred Areas",
+          "type": "array"
+        },
+        "must_visit": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Must Visit",
+          "type": "array"
+        },
+        "avoid_places": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Avoid Places",
+          "type": "array"
+        }
+      },
+      "required": [
+        "selection_mode",
+        "city",
+        "province",
+        "country",
+        "candidate_cities",
+        "preferred_areas",
+        "must_visit",
+        "avoid_places"
+      ],
+      "title": "Destination",
+      "type": "object"
+    },
+    "SelectionProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": [
+            "user",
+            "default",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "evidence": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Evidence",
+          "type": "string"
+        },
+        "episode_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Episode Id"
+        },
+        "question_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question Id"
+        }
+      },
+      "required": [
+        "source",
+        "evidence"
+      ],
+      "title": "SelectionProvenance",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
   "properties": {
     "round": {
@@ -123,6 +306,17 @@
       ],
       "default": null,
       "title": "Constraint Confirmed"
+    },
+    "destination_update": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Destination"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

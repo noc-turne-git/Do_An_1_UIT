@@ -45,13 +45,16 @@ class Database:
         with self.sessions() as session:
             event.listen(session, 'after_flush', collect_messages)
             try:
-                with session.begin():
-                    yield session
+                # Workflow final-resolution checkpoints may commit a claim before
+                # a provider call. The session starts the next transaction lazily.
+                yield session
+                session.commit()
                 if session.info.get('chat_message_id'):
                     logger.info('chat.message_committed message_id=%s', session.info['chat_message_id'])
                 for message in session.info.pop('conversation_messages', []):
                     log_message(**message)
             except Exception:
+                session.rollback()
                 if session.info.get('chat_message_id'):
                     logger.warning('chat.message_rolled_back message_id=%s', session.info['chat_message_id'])
                 raise

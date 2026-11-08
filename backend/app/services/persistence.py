@@ -15,6 +15,39 @@ TYPES = dict(request_parser='trip_request', destination_agent='destination_resul
 
 
 class WorkflowPersistence(OwnedRepository):
+    def refresh_episode(self, run):
+        from app.repositories.clarifications import ClarificationRepository
+        repo = ClarificationRepository(self.session, self.user_id)
+        return repo.contract(repo.episode(run.state.request_id))
+
+    def update_episode_policy(self, run, policy):
+        from app.repositories.clarifications import ClarificationRepository
+        return ClarificationRepository(self.session, self.user_id).update_policy(
+            run.state.request_id, run.state.destination_episode.episode_id, policy)
+
+    def _durable_final_checkpoint(self, run, episode):
+        from ai.orchestration.workflow_state import StateMachine
+        StateMachine(run).update(destination_episode=episode)
+        self.sync(run)
+        self.save_graph(run)
+        # This is a business operation boundary, not a savepoint: a restart must
+        # see the claim even if the provider or a later planning node crashes.
+        self.session.commit()
+
+    def claim_final_resolve(self, run, operation_id):
+        from app.repositories.clarifications import ClarificationRepository
+        episode, acquired = ClarificationRepository(self.session, self.user_id).claim_final_resolve(
+            run.state.request_id, run.state.destination_episode.episode_id, operation_id)
+        self._durable_final_checkpoint(run, episode)
+        return episode, acquired
+
+    def complete_final_resolve(self, run, operation_id, result):
+        from app.repositories.clarifications import ClarificationRepository
+        episode = ClarificationRepository(self.session, self.user_id).complete_final_resolve(
+            run.state.request_id, run.state.destination_episode.episode_id, operation_id, result)
+        self._durable_final_checkpoint(run, episode)
+        return episode
+
     def answer_question(self, run, answer):
         from app.repositories.clarifications import ClarificationRepository
         stored = ClarificationRepository(self.session, self.user_id).answer(

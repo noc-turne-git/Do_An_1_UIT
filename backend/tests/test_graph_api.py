@@ -40,6 +40,7 @@ def test_api_graph_dependency_and_persisted_result(monkeypatch):
     application = create_app(Settings(_env_file=None))
     session, row = MagicMock(), MagicMock()
     row.status, row.trip_id = "parsing", uuid4()
+    row.graph_snapshot = None
     identifier = uuid4()
     stored = {}
     monkeypatch.setattr(WorkflowPersistence, "request", lambda *a, **kw: row)
@@ -51,6 +52,8 @@ def test_api_graph_dependency_and_persisted_result(monkeypatch):
         return issued, episode, 1
     monkeypatch.setattr(WorkflowPersistence, 'issue_question', issue_question)
     monkeypatch.setattr(WorkflowPersistence, 'answer_question', lambda self, run, answer: answer)
+    monkeypatch.setattr(WorkflowPersistence, 'update_episode_policy', lambda self, run, policy:
+        DestinationEpisode.model_validate(run.state.destination_episode.model_dump() | policy.model_dump()))
     monkeypatch.setattr(WorkflowPersistence, "sync", lambda self, run: setattr(row, "status", run.state.status))
     monkeypatch.setattr(WorkflowPersistence, "save_graph", lambda self, run: stored.update(snapshot=run.model_dump_json()))
     monkeypatch.setattr(WorkflowPersistence, "load_graph", lambda *a: GraphRun.model_validate_json(stored["snapshot"]))

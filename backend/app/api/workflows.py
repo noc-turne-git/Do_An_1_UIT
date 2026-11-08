@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 from app.api.auth import get_current_user_id
 from app.db.session import get_session
-from shared.contracts import TripRequest
+from shared.contracts import TripRequest, AnswerHistory
 from app.repositories.workflows import TripRepository, RequestRepository
 from app.repositories.artifacts import ArtifactRepository
 from app.services.persistence import WorkflowPersistence
@@ -46,6 +46,7 @@ class RunInput(BaseModel):
     trip_request: TripRequest
     answer_raw: str | None = None
     expected_transitions: int | None = None
+    answer: AnswerHistory | None = None
 
 
 @router.post('/trips', response_model=TripView, status_code=201)
@@ -100,17 +101,19 @@ def persist_mock_run(request_id: UUID, body: RunInput, user: UUID = Depends(get_
     row = persistence.request(request_id, lock=True)
     previous = None
     if row.status in {'clarifying', 'awaiting_relaxation'}:
-        if body.answer_raw is None:
+        if body.answer_raw is None and body.answer is None:
             raise HTTPException(422, 'answer_raw is required to resume')
         previous = persistence.load_graph(request_id)
         if body.expected_transitions is not None and previous.transitions != body.expected_transitions:
             raise HTTPException(409, 'Workflow changed; reload before resuming')
+    elif row.status in {'parsing', 'planning'} and row.graph_snapshot is not None:
+        previous = persistence.load_graph(request_id)
     elif row.status != 'parsing':
         raise HTTPException(409, 'Create a new request for a new run')
     graph.persistence = persistence
     return asyncio.run(graph.run(body.trip_request,
             current_date=datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).date(), previous=previous,
-            answer_raw=body.answer_raw, trip_id=row.trip_id, request_id=request_id))
+            answer_raw=body.answer_raw, answer=body.answer, trip_id=row.trip_id, request_id=request_id))
 
 
 @router.get('/requests/{request_id}/run', response_model=GraphRun)

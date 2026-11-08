@@ -185,6 +185,9 @@ class ClarificationRepository(OwnedRepository):
             request = self.request(request_id, lock=True)
             episode = self.episode(request_id, episode_id)
             self._active(request, episode)
+            policy = SelectionPolicy.model_validate(episode.selection_policy)
+            if policy.selection_intent not in {'ANY', 'ANY_DESTINATION'} or policy.selection_authority != 'delegated':
+                conflict('Only delegated ANY may claim final resolution')
             if episode.final_resolve_status != 'not_started':
                 if episode.final_resolve_id != operation_id:
                     conflict('Final resolve operation already exists')
@@ -198,6 +201,21 @@ class ClarificationRepository(OwnedRepository):
             self.session.flush()
             self._snapshot(request)
             return self.contract(episode), True
+
+    def update_policy(self, request_id, episode_id, policy: SelectionPolicy):
+        policy = SelectionPolicy.model_validate(policy.model_dump())
+        with self.session.begin_nested():
+            request = self.request(request_id, lock=True)
+            episode = self.episode(request_id, episode_id)
+            self._active(request, episode)
+            payload = policy.model_dump(mode='json')
+            if payload != episode.selection_policy:
+                if self.questions(request_id, open_only=True) or episode.final_resolve_status != 'not_started':
+                    conflict('Cannot change intent while a question or final resolve is open')
+                episode.selection_policy = payload
+                self.session.flush()
+                self._snapshot(request)
+            return self.contract(episode)
 
     def complete_final_resolve(self, request_id, episode_id, operation_id, result: DestinationResult):
         result = DestinationResult.model_validate(result.model_dump()).require_canonical_recovery()

@@ -58,12 +58,27 @@ Sau câu trả lời cuối hoặc đóng question theo hành động tường m
 not_started → claimed → completed cùng result. Restart dùng lại completed result;
 claimed không tự chạy lại nghiệp vụ, cần reconcile theo operation ID.
 
-Chỉ ANY_DESTINATION hoặc DELEGATE_SELECTION (legacy ANY) với authority delegated
+Chỉ ANY_DESTINATION (legacy ANY) với authority delegated
 và bằng chứng user mới được default candidate
 rank=1 sau final resolve completed, khi candidate vẫn hợp lệ. Rank không phải vị
 trí array. UNKNOWN/UNSPECIFIED không default, kể cả chỉ còn một candidate; thiếu
 lựa chọn/ủy quyền thì failed. Không có candidate hợp lệ thì failed. EXPLICIT chỉ
 xác minh nơi user đã chỉ định, không thay bằng nơi khác.
+
+DELEGATE_SELECTION đủ dữ liệu phải trả về selected, không phát destination_choice.
+Nếu Agent A trả choice cho DELEGATE thì graph từ chối kết quả không hợp lệ; không
+chọn tùy tiện từ danh sách. DELEGATE không chạy final resolve khi hết budget.
+DestinationResult.selection_method do CODE ghi: USER_EXPLICIT / USER_CHOICE có
+source=user; DELEGATED / ANY_DEFAULT có source=default. selection_mode không cấp
+authority. Option response dùng AnswerHistory có identity và snapshot câu hỏi;
+raw option ID không đủ để nhận lựa chọn. Parser-confirmed destination_update được
+lưu trong answer và vẫn phải qua Agent A validate trước planning.
+
+GraphRun.awaiting_final_resolve=true biểu thị operation claimed cần reconcile;
+workflow giữ trạng thái planning. Retry chỉ đọc lại operation, không gọi provider.
+Khi reconcile ghi completed result với cùng operation ID, graph dùng lại result.
+WorkflowPersistence commit checkpoint claim trước provider và checkpoint result
+trước selection/planning; caller phải dùng session cho phép các commit boundary.
 
 TripRequest hết lượt chỉ áp defaults đã cấu hình: children=0, preferences theo
 config; budget.amount giữ null nếu chưa biết. start_date/end_date, adults và city
@@ -109,7 +124,9 @@ hoặc proposal dùng template từ snapshot CODE, không gọi LLM viết lại
 | Commit 1 — implemented | Policy và tài liệu thống nhất; chưa thay runtime |
 | Commit 2 — implemented | Contracts, invariants, serialization và JSON Schema |
 | Commit 3 — implemented | Migration mới, atomic episode/question/answer storage, lifecycle factory, final-resolve persistence; kiểm chứng PostgreSQL riêng |
-| Planned sau Commit 3 | Parser intent, Agent A routing, sửa graph tăng counter mỗi lần Agent A chạy, state machine gọi issuance/final resolve, Chat integration |
+| Commit 8 — implemented | TripRequest defaults từ policy, sau khi câu hỏi cuối đã được xử lý |
+| Commit 9 — implemented | Destination routing/authority, structured answers, final resolve durable, constraint consent |
+| Planned | Chat UI integration và lifecycle tạo episode mới sau completed |
 
 Ba commit nền tảng không có nghĩa clarification flow đã hoàn tất end-to-end.
 Kết quả kiểm chứng và giới hạn migration cũ: [CLARIFICATION_VERIFICATION.md](CLARIFICATION_VERIFICATION.md).

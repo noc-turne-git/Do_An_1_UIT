@@ -795,7 +795,8 @@ def test_canonical_supabase_alembic_schema_parity(database):
                 connection.commit()
                 for path in [ROOT / 'supabase' / 'schema.sql',
                              ROOT / 'supabase' / 'migrations' / '20261107_clarification_round_kinds.sql',
-                             ROOT / 'supabase' / 'migrations' / '20261107_canonical_episodes.sql']:
+                             ROOT / 'supabase' / 'migrations' / '20261107_canonical_episodes.sql',
+                             ROOT / 'supabase' / 'migrations' / '20261108_destination_responses.sql']:
                     cursor.execute(path.read_text(encoding='utf-8'))
                 connection.commit()
         def fingerprint(engine):
@@ -812,3 +813,154 @@ def test_canonical_supabase_alembic_schema_parity(database):
         assert fingerprint(database.engine) == fingerprint(peer)
     finally:
         peer.dispose()  # Leave both disposable databases for inspection; no destructive cleanup.
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('sequence', [
+    ('needs_more_info', 'needs_user_choice'), ('needs_user_choice', 'needs_more_info'),
+    ('needs_more_info', 'needs_more_info'), ('needs_user_choice', 'needs_user_choice')])
+def test_destination_graph_final_resolve_durable_across_sessions(database, sequence):
+    from unittest.mock import AsyncMock
+    from test_destination_resolution import request as input_request, result, answer
+    from app.repositories.clarifications import ClarificationRepository
+    from ai.agents.runtime.context import execution_identity
+    user, trip, request_id = seed(database)
+    data = TripRequest.model_validate(input_request())
+    components = mock_components()
+    results = iter([*(result(status) for status in sequence), result()])
+    seen_operations = []
+
+    async def resolve(current):
+        operation = (execution_identity.get() or {}).get('metadata', {}).get('final_resolve_id')
+        if operation:
+            # A distinct DB connection sees the claim BEFORE the business call.
+            with database.sessions() as observer:
+                repo = ClarificationRepository(observer, user)
+                ep = repo.contract(repo.episode(request_id))
+                assert ep.final_resolve_status == 'claimed' and str(ep.final_resolve_id) == operation
+                assert not repo.questions(request_id, open_only=True)
+                assert len(repo.answers(request_id)) == 2
+            seen_operations.append(operation)
+        return next(results)
+    components.destination_agent.select = AsyncMock(side_effect=resolve)
+
+    def turn(resume=False):
+        with database.sessions() as session:
+            persistence = WorkflowPersistence(session, user)
+            previous = persistence.load_graph(request_id) if resume else None
+            graph = LangGraphOrchestrator(components, defaults=fixture('planner_defaults'), persistence=persistence)
+            run = asyncio.run(graph.run(data, current_date=date(2026, 11, 4),
+                trip_id=trip, request_id=request_id, previous=previous,
+                answer=answer(previous) if previous and previous.pending_questions else None))
+            session.commit()
+            return run
+    first, second = turn(), turn(True)
+    assert first.state.destination_round == 1
+    assert second.state.destination_round == 2 and second.pending_questions[0].status == 'open'
+    assert not seen_operations
+    final = turn(True)
+    assert final.state.status == 'completed', final.errors
+    assert final.outputs['destination_agent'].selected_candidate_id == 'dalat'
+    assert final.outputs['destination_agent'].selection_method == 'ANY_DEFAULT'
+    assert len(seen_operations) == 1 and components.destination_agent.select.await_count == 3
+    with database.sessions() as session:
+        restored = WorkflowPersistence(session, user).load_graph(request_id)
+        assert restored.state.destination_episode.final_resolve_status == 'completed'
+        assert restored.outputs['destination_agent'] == final.outputs['destination_agent']
+
+
+@pytest.mark.postgres
+def test_destination_choice_new_explicit_city_is_persisted_and_validated(database):
+    from unittest.mock import AsyncMock
+    from test_destination_resolution import request as input_request, result
+    from app.repositories.clarifications import ClarificationRepository
+    user, trip, request_id = seed(database)
+    components = mock_components()
+    components.destination_agent.select = AsyncMock(side_effect=[result(), result('selected')])
+    for intent in ['ANY_DESTINATION', 'EXPLICIT']:
+        with database.sessions() as session:
+            persistence = WorkflowPersistence(session, user)
+            previous = persistence.load_graph(request_id) if intent == 'EXPLICIT' else None
+            graph = LangGraphOrchestrator(components, defaults=fixture('planner_defaults'), persistence=persistence)
+            run = asyncio.run(graph.run(TripRequest.model_validate(input_request(intent)),
+                current_date=date(2026, 11, 4), trip_id=trip, request_id=request_id,
+                previous=previous, answer_raw='I want Da Lat' if previous else None))
+            session.commit()
+    assert run.state.status == 'completed', run.errors
+    assert run.outputs['destination_agent'].selection_method == 'USER_EXPLICIT'
+    with database.sessions() as session:
+        repo = ClarificationRepository(session, user)
+        saved = repo.answers(request_id)[0]
+        assert saved.selected_option_id is None and saved.destination_update.selection_intent == 'EXPLICIT'
+        assert repo.contract(repo.episode(request_id)).destination_round == 1
+
+
+@pytest.mark.postgres
+def test_destination_claimed_restart_requires_reconciliation_and_reuses_result(database):
+    from unittest.mock import AsyncMock
+    from test_destination_resolution import request as input_request, result, answer
+    from app.repositories.clarifications import ClarificationRepository
+    user, trip, request_id = seed(database)
+    components = mock_components()
+    components.destination_agent.select = AsyncMock(side_effect=[result(), result(), RuntimeError('connection lost')])
+    data = TripRequest.model_validate(input_request())
+    for index in range(4):
+        with database.sessions() as session:
+            persistence = WorkflowPersistence(session, user)
+            previous = persistence.load_graph(request_id) if index else None
+            graph = LangGraphOrchestrator(components, defaults=fixture('planner_defaults'), persistence=persistence)
+            run = asyncio.run(graph.run(data, current_date=date(2026, 11, 4),
+                trip_id=trip, request_id=request_id, previous=previous,
+                answer=answer(previous) if previous and previous.pending_questions else None))
+            session.commit()
+        if index >= 2:
+            assert run.awaiting_final_resolve and run.state.status == 'planning'
+            assert run.state.destination_episode.final_resolve_status == 'claimed'
+    assert components.destination_agent.select.await_count == 3
+    operation = run.state.destination_episode.final_resolve_id
+    with database.sessions.begin() as session:
+        # Reconciliation supplies the result of the SAME operation.
+        ClarificationRepository(session, user).complete_final_resolve(request_id,
+            run.state.destination_episode.episode_id, operation, result())
+    with database.sessions() as session:
+        persistence = WorkflowPersistence(session, user)
+        previous = persistence.load_graph(request_id)
+        final = asyncio.run(LangGraphOrchestrator(components, defaults=fixture('planner_defaults'),
+            persistence=persistence).run(data, current_date=date(2026, 11, 4), previous=previous))
+        session.commit()
+    assert final.state.status == 'completed', final.errors
+    assert not final.awaiting_final_resolve
+    assert final.state.destination_episode.final_resolve_id == operation
+    assert components.destination_agent.select.await_count == 3
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('runtime', [False, True])
+def test_factory_policy_last_trip_question_survives_restart_before_default(database, runtime):
+    from ai.interface import build_orchestrator
+    from test_destination_resolution import answer
+    user, trip, request_id = seed(database)
+    settings = Settings(_env_file=None, graph_max_clarifications=1, agent_runtime_enabled=runtime)
+    data = fixture('trip_request')
+    data['travelers']['children'] = None
+    data['meta']['field_sources'].pop('travelers.children', None)
+    request = TripRequest.model_validate(data)
+    with database.sessions() as session:
+        persistence = WorkflowPersistence(session, user)
+        graph = build_orchestrator(settings, persistence=persistence)
+        first = asyncio.run(graph.run(request, current_date=date(2026, 11, 4),
+            trip_id=trip, request_id=request_id))
+        assert first.state.clarification_round == first.state.max_clarification_rounds == 1
+        assert first.pending_questions[0].status == 'open'
+        assert first.outputs['request_parser'].travelers.children is None
+        session.commit()
+    with database.sessions() as session:
+        persistence = WorkflowPersistence(session, user)
+        previous = persistence.load_graph(request_id)
+        graph = build_orchestrator(settings, persistence=persistence)
+        final = asyncio.run(graph.run(request, current_date=date(2026, 11, 4),
+            previous=previous, answer=answer(previous)))
+        assert final.state.status == 'completed', final.errors
+        assert final.outputs['request_parser'].travelers.children == 0
+        assert final.outputs['request_parser'].meta.field_sources['travelers.children'] == 'default'
+        session.commit()

@@ -426,17 +426,18 @@ def test_session_transaction_context_and_cleanup(failure, monkeypatch):
     session.__enter__.return_value = session
     factory = MagicMock(return_value=session)
     database.sessions = factory
-    transaction = session.begin.return_value
     generator = database.session()
     assert next(generator) is session
     if failure:
         with pytest.raises(RuntimeError, match="rollback"):
             generator.throw(RuntimeError("rollback"))
-        assert transaction.__exit__.call_args.args[0] is RuntimeError
+        session.rollback.assert_called_once()
+        session.commit.assert_not_called()
     else:
         with pytest.raises(StopIteration):
             next(generator)
-        assert transaction.__exit__.call_args.args == (None, None, None)
+        session.commit.assert_called_once()
+        session.rollback.assert_not_called()
     session.__exit__.assert_called_once()
 
 

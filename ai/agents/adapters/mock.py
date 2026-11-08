@@ -93,7 +93,9 @@ def runtime_mock_components(*, limits=None):
             output_schema=output_schema,handler=handler,side_effects=False))
         skills.register(SkillDefinition(name=skill, description='Mock instructions',
             instructions='Use registered mock data only. Return the existing business schema.'))
-        definition = AgentDefinition(name=name, description='Mock runtime component', system_prompt='Use the mock tool.',
+        from ai.agents.destination.prompts import PROMPT as DESTINATION_PROMPT
+        definition = AgentDefinition(name=name, description='Mock runtime component',
+            system_prompt=DESTINATION_PROMPT if name == 'destination_agent' else 'Use the mock tool.',
             allowed_tools={tool}, allowed_skills={skill}, output_schema=output_schema,
             **({'limits':limits} if limits is not None else {}))
         setattr(components,name,adapter(definition,AgentHarness(MockToolLLMAdapter(tool),tools,skills),skill))

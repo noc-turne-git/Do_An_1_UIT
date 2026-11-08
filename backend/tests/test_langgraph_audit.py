@@ -71,7 +71,9 @@ def test_audit_destination_refresh_changes_consumer_input():
     c.place_agent.find = AsyncMock(side_effect=find)
     w = workflow(c)
     scheduled = observe(w)
-    run = execute(w)
+    data = fixture('trip_request')
+    data['destination']['province'] = None  # Resolver metadata, not a user constraint.
+    run = execute(w, data)
     assert run.state.status == "completed"
     regions = [v["selected_region"]["province"] for v in run.artifacts.values()
                if isinstance(v, dict) and "selected_region" in v]
@@ -141,7 +143,7 @@ def test_audit_limits(kind):
         c.place_agent.find = AsyncMock(return_value=[])
     else:
         limits.max_clarifications = 0
-        data["budget"]["amount"] = None
+        data['travelers']['adults'] = None  # Never-default requirement exhausts safely.
     w = workflow(c, limits=limits)
     scheduled = observe(w)
     run = execute(w, data)

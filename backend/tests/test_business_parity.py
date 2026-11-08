@@ -80,6 +80,15 @@ def test_identical_fixtures_preserve_complete_business_payloads(scenario):
     # Upgrade only the wire representation of the frozen legacy expectations.
     # Original business values remain frozen; safe contract defaults are explicit.
     expected = expected[scenario]
+    # The sample now carries explicit user authority; planning artifacts retain
+    # their frozen values, while selection gains auditable canonical provenance.
+    expected['payloads']['trip_request_id']['destination'].update({
+        key: data['destination'][key] for key in
+        ('selection_intent', 'selection_authority', 'selection_provenance')})
+    destination_result = expected['payloads'].get('destination_result_id')
+    if destination_result and destination_result['selection_status'] == 'selected':
+        destination_result.update(selection_method='USER_EXPLICIT',
+            selection_provenance=data['destination']['selection_provenance'])
     for index, ref in enumerate(REFS):
         if ref in expected['payloads']:
             adapter = TypeAdapter(OUTPUTS[index])
