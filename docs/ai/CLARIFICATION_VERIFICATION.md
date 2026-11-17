@@ -25,7 +25,7 @@ used a dedicated cluster in ignored `backend/.tmp-postgres-canonical`, port 5543
 ## Evidence covered
 
 `ai/tests/test_clarification_contracts.py` checks safe legacy defaults, explicit
-authority/provenance, single-candidate confirmation, ranked default after final
+authority/source, single-candidate confirmation, ranked default after final
 resolve, episode budget/ownership, structured recovery, cross-question responses,
 constraint confirmation, serialization and exported JSON Schema validation/drift.
 
@@ -67,20 +67,19 @@ upgrades. No hash check is bypassed and no old migration is rewritten.
 
 The previous revision ID also exceeds Alembic's default varchar(32); Alembic env
 now provisions/widens its version column to varchar(128), keeping old IDs intact.
-The new migration executes the same SQL as the new Supabase migration.
+The five-intent migration executes the same SQL as the new Supabase migration.
 
 ## Implemented versus planned
 
-Implemented: canonical contracts, three new relational tables, workflow episode
-ownership, shared destination budget, atomic/idempotent persistence operations,
-graph snapshot consistency checks, terminal failure protection, lifecycle B
-factory and durable final-resolve claim/result.
+Implemented: canonical contracts, workflow episode ownership, shared destination
+budget, atomic/idempotent persistence operations, graph snapshot consistency
+checks, terminal failure protection, lifecycle B factory, durable final-resolve
+claim/result, intent parsing, authority/source routing, and Chat/API selection
+handling. The current contract accepts exactly five intents and uses the separate
+`destination_source` field instead of treating audit provenance as the source.
 
-Still planned: intent parsing, Agent A purpose/authority routing, fixing graph
-counter increments on each Agent A run, orchestration calls to the canonical
-repository, provider reconciliation for an interrupted claim, and Chat selection
-integration. Canonical issuance is explicit; legacy sync never fabricates valid
-canonical questions. A persisted claim prevents automatic re-execution but cannot
-promise external-provider exactly-once semantics without provider cooperation.
-
-These three commits complete the foundation, not the end-to-end clarification flow.
+Still planned: provider reconciliation for an interrupted external claim and the
+post-completion lifecycle that starts a new episode. Canonical issuance is
+explicit; legacy sync never fabricates valid canonical questions. A persisted
+claim prevents automatic re-execution but cannot promise external-provider
+exactly-once semantics without provider cooperation.

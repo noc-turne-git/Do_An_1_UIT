@@ -45,6 +45,11 @@ def test_api_graph_dependency_and_persisted_result(monkeypatch):
     stored = {}
     monkeypatch.setattr(WorkflowPersistence, "request", lambda *a, **kw: row)
     monkeypatch.setattr(WorkflowPersistence, "save", lambda *a: None)
+    episodes = {}
+    def ensure_episode(self, run, policy):
+        return episodes.setdefault(run.state.request_id, DestinationEpisode(
+            episode_id=uuid4(), request_id=run.state.request_id, **policy.model_dump()))
+    monkeypatch.setattr(WorkflowPersistence, 'ensure_episode', ensure_episode)
     def issue_question(self, run, draft, trip_request, *, question_id=None):
         episode = DestinationEpisode(episode_id=uuid4(), request_id=run.state.request_id)
         issued = attach_identity(draft, question_id=question_id or uuid4(),
@@ -71,8 +76,10 @@ def test_api_graph_dependency_and_persisted_result(monkeypatch):
         assert client.post(url + "/mock-run", json={"trip_request": fixture("trip_request")}).status_code == 422
         assert client.post(url + "/mock-run", json={"trip_request": fixture("trip_request"),
             "answer_raw": "Da Lat", "expected_transitions": 0}).status_code == 409
+        question = waiting.json()['pending_questions'][0]
         complete = client.post(url + "/mock-run", json={"trip_request": fixture("trip_request"),
-            "answer_raw": "Da Lat", "expected_transitions": waiting.json()["transitions"]})
+            "answer_raw": "Da Lat", "expected_transitions": waiting.json()["transitions"],
+            "episode_id": question['episode_id'], "question_id": question['question_id']})
         assert complete.status_code == 200, complete.text
         assert complete.json()["state"]["request_id"] == str(identifier)
         assert complete.json()["state"]["status"] == "completed"

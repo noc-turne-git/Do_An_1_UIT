@@ -7,22 +7,20 @@ Giữ tên selected_region, question, fields; không đổi tên theo ví dụ m
 
 | selection_intent | Ý nghĩa | selection_authority |
 | --- | --- | --- |
-| EXPLICIT | User chỉ định điểm đến cụ thể | user |
-| ANY_DESTINATION | User nói đâu cũng được | delegated khi có provenance user |
-| DELEGATE_SELECTION | User yêu cầu hệ thống chọn giúp | delegated khi có provenance user |
-| USER_UNKNOWN | User nói chưa biết chọn đâu | none |
-| UNSPECIFIED | Chưa có bằng chứng ý định | none |
+| EXPLICIT | User chỉ định điểm đến cụ thể | USER |
+| USER_UNKNOWN | User chưa biết chọn đâu nhưng tự chọn từ gợi ý | USER |
+| ANY_DESTINATION | User nói đâu cũng được; ban đầu vẫn tự chọn | USER, chỉ thành SYSTEM khi exhaustion policy chọn mặc định |
+| DELEGATE_SELECTION | User yêu cầu Agent chọn giúp | AGENT |
+| UNSPECIFIED | Chưa có bằng chứng ý định | null |
 
 selection_mode (explicit/implicit/ambiguous) mô tả cách resolve địa danh,
 không phải intent hoặc quyền ủy thác. implicit không suy ra ANY. Một candidate
-duy nhất không cấp quyền chọn cho UNKNOWN/UNSPECIFIED. selection_provenance lưu
-source, evidence user và question_id/episode_id nếu quyết định từ câu trả lời.
-Legacy thiếu intent/authority dùng UNSPECIFIED/none, không suy ra từ city hay
-field_sources. Giá trị cũ ANY/UNKNOWN vẫn đọc được; parser mới ghi
-ANY_DESTINATION/DELEGATE_SELECTION/USER_UNKNOWN. User chọn option tạo EXPLICIT/user.
-Default theo intent delegated giữ provenance; DestinationResult.selection_provenance
-ghi default, không giả thành user chọn.
-Destination.selection_provenance giữ bằng chứng user đã cấp delegation.
+duy nhất không cấp quyền chọn cho USER_UNKNOWN/UNSPECIFIED. `selection_intent`,
+`selection_authority` và `destination_source` là ba field riêng: source chỉ là
+`user`, `AGENT_DELEGATED`, `SYSTEM_DEFAULT` hoặc null. `selection_provenance`
+chỉ giữ evidence/audit của phát biểu user, không thay source. Legacy thiếu
+intent/authority dùng UNSPECIFIED/null, không suy ra từ city hay field_sources.
+User chọn option giữ intent của episode, authority USER và source=user.
 
 ## Ba question kinds, phân loại theo mục đích
 
@@ -58,18 +56,19 @@ Sau câu trả lời cuối hoặc đóng question theo hành động tường m
 not_started → claimed → completed cùng result. Restart dùng lại completed result;
 claimed không tự chạy lại nghiệp vụ, cần reconcile theo operation ID.
 
-Chỉ ANY_DESTINATION (legacy ANY) với authority delegated
-và bằng chứng user mới được default candidate
-rank=1 sau final resolve completed, khi candidate vẫn hợp lệ. Rank không phải vị
-trí array. UNKNOWN/UNSPECIFIED không default, kể cả chỉ còn một candidate; thiếu
-lựa chọn/ủy quyền thì failed. Không có candidate hợp lệ thì failed. EXPLICIT chỉ
+Chỉ ANY_DESTINATION với authority USER và source chưa được gán mới có thể default
+candidate rank=1 sau final resolve completed, khi candidate vẫn hợp lệ; lúc đó
+authority/source trở thành SYSTEM/SYSTEM_DEFAULT. Rank không phải vị trí array.
+USER_UNKNOWN/UNSPECIFIED không default, kể cả chỉ còn một candidate; thiếu lựa
+chọn/ủy quyền thì failed. Không có candidate hợp lệ thì failed. EXPLICIT chỉ
 xác minh nơi user đã chỉ định, không thay bằng nơi khác.
 
 DELEGATE_SELECTION đủ dữ liệu phải trả về selected, không phát destination_choice.
 Nếu Agent A trả choice cho DELEGATE thì graph từ chối kết quả không hợp lệ; không
 chọn tùy tiện từ danh sách. DELEGATE không chạy final resolve khi hết budget.
 DestinationResult.selection_method do CODE ghi: USER_EXPLICIT / USER_CHOICE có
-source=user; DELEGATED / ANY_DEFAULT có source=default. selection_mode không cấp
+source=user; AGENT_DELEGATED có source=AGENT_DELEGATED; SYSTEM_DEFAULT chỉ có
+sau khi ANY_DESTINATION dùng hết 2 lượt và có unique rank-1. selection_mode không cấp
 authority. Option response dùng AnswerHistory có identity và snapshot câu hỏi;
 raw option ID không đủ để nhận lựa chọn. Parser-confirmed destination_update được
 lưu trong answer và vẫn phải qua Agent A validate trước planning.

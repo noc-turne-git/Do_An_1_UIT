@@ -44,6 +44,17 @@ class AgentHarness:
             event('failed', duration=monotonic()-started, error_code=code)
             return AgentResult(status=AgentStatus.FAILED,
                 error=AgentError(code=code, message='Agent execution failed'), events=events, token_usage=usage)
+        def log_provider_diagnostic(code, diagnostic):
+            if not diagnostic:
+                return
+            # Diagnostic metadata is deliberately limited by the adapter to
+            # type/status/request-id; never log provider payloads or messages.
+            logger.warning('agent_runtime.provider_error', extra={
+                'request_id': context.request_id, 'agent_name': definition.name,
+                'error_code': code, 'provider_diagnostic': diagnostic})
+            identity = execution_identity.get() or {}
+            log_execution(run_id=context.request_id, trip_id=identity.get('trip_id'),
+                step='agent_runtime.provider_error', result=diagnostic, error=code)
         event('started')
         try:
             async with asyncio.timeout(definition.limits.timeout):
@@ -93,10 +104,13 @@ class AgentHarness:
                             event('llm_retry', error_code=code)
                             await asyncio.sleep(min(5, definition.limits.retry_backoff * 2 ** (retries - 1)))
                         except ProviderError as exc:
+                            log_provider_diagnostic(exc.code, exc.diagnostic)
                             return failure(exc.code)
                         except ValidationError:
                             return failure('INVALID_LLM_RESPONSE')
-                        except Exception:
+                        except Exception as exc:
+                            log_provider_diagnostic('LLM_EXECUTION_ERROR', {
+                                'exception_type': type(exc).__name__})
                             return failure('LLM_EXECUTION_ERROR')
                     for key, value in response.token_usage.items():
                         usage[key] = usage.get(key, 0) + value

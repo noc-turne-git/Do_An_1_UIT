@@ -59,7 +59,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(ApplicationError)
     async def application_error(request: Request, exc: ApplicationError):
-        return JSONResponse(status_code=404 if exc.code == 'not_found' else 503 if exc.retryable else 400,
+        return JSONResponse(status_code=404 if exc.code == 'not_found' else 409 if exc.code == 'stale_turn' else 503 if exc.retryable else 400,
                             content={"error": {"code": exc.code, "message": exc.message, "retryable": exc.retryable}})
 
     @app.exception_handler(RequestValidationError)

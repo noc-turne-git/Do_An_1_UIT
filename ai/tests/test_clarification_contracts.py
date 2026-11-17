@@ -13,7 +13,7 @@ from ai.orchestration.mock_workflow import fixture
 
 def question(**overrides):
     data = dict(question_id=uuid4(), episode_id=uuid4(), status='open', round=2,
-        kind='destination_choice', intent_snapshot='UNKNOWN', question='Choose a region',
+        kind='destination_choice', intent_snapshot='USER_UNKNOWN', question='Choose a region',
         fields=['destination.city'], options=[dict(option_id='o1', candidate_id='c1',
             city='Da Lat', rank=1, reason='Cool weather')])
     return PendingQuestion.model_validate(data | overrides)
@@ -39,7 +39,7 @@ def test_legacy_does_not_grant_authority_or_actionability():
         for key in SelectionPolicy.model_fields:
             data.pop(key, None)
         dest = Destination.model_validate(data)
-        assert (dest.selection_intent, dest.selection_authority) == ('UNSPECIFIED', 'none')
+        assert (dest.selection_intent, dest.selection_authority) == ('UNSPECIFIED', None)
     q = PendingQuestion(question='Choose', fields=['destination.city'], kind='destination_choice')
     assert q.status == 'legacy'
     with pytest.raises(ValueError, match='not open'):
@@ -48,34 +48,32 @@ def test_legacy_does_not_grant_authority_or_actionability():
         question(options=[dict(option_id='old', city='Hue')])
 
 
-@pytest.mark.parametrize('intent', ['UNKNOWN', 'UNSPECIFIED', 'EXPLICIT'])
-def test_delegation_not_inferred(intent):
+@pytest.mark.parametrize('intent', ['USER_UNKNOWN', 'UNSPECIFIED', 'EXPLICIT'])
+def test_agent_authority_not_inferred(intent):
     with pytest.raises(ValidationError):
-        SelectionPolicy(selection_intent=intent, selection_authority='delegated',
+        SelectionPolicy(selection_intent=intent, selection_authority='AGENT',
                         selection_provenance=dict(source='user', evidence='anywhere'))
 
 
-def test_any_requires_user_evidence_and_completed_final_resolve():
+def test_any_requires_exhausted_rounds_and_completed_final_resolve():
     with pytest.raises(ValidationError):
-        SelectionPolicy(selection_intent='ANY', selection_authority='delegated')
+        SelectionPolicy(selection_intent='ANY', selection_authority='USER')
     episode = DestinationEpisode(episode_id=uuid4(), request_id=uuid4(),
-        selection_intent='ANY', selection_authority='delegated',
+        selection_intent='ANY_DESTINATION', selection_authority='USER',
         selection_provenance=dict(source='user', evidence='anywhere'))
     with pytest.raises(ValueError):
         episode.default_candidate()
     episode = DestinationEpisode.model_validate(episode.model_dump() | dict(
         final_resolve_status='completed', final_resolve_id=uuid4(), final_resolve_result=result()))
     assert episode.default_candidate().candidate_id == 'c1'  # not array position zero
-    for intent in ['ANY_DESTINATION']:
-        delegated = DestinationEpisode.model_validate(episode.model_dump() | dict(
-            selection_intent=intent))
-        assert delegated.default_candidate().candidate_id == 'c1'
+    assert episode.default_candidate().candidate_id == 'c1'
     with pytest.raises(ValueError):
         DestinationEpisode.model_validate(episode.model_dump() | dict(
             selection_intent='DELEGATE_SELECTION')).default_candidate()
-    for intent in ['UNKNOWN', 'UNSPECIFIED']:
+    for intent in ['USER_UNKNOWN', 'UNSPECIFIED']:
         other = DestinationEpisode.model_validate(episode.model_dump() | dict(
-            selection_intent=intent, selection_authority='none', selection_provenance=None))
+            selection_intent=intent, selection_authority=('USER' if intent == 'USER_UNKNOWN' else None),
+            destination_source=None, selection_provenance=None))
         with pytest.raises(ValueError):
             other.default_candidate()
 

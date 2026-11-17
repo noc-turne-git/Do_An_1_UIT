@@ -28,8 +28,11 @@ def option_request(request, question, selected):
     if option is None:
         raise InvalidAnswer('Option does not belong to the issued snapshot')
     data = request.model_dump()
+    # Choosing an issued option is a USER decision, not evidence that the
+    # episode's intent has become EXPLICIT.  The intent remains USER_UNKNOWN or
+    # ANY_DESTINATION while the source records this actual selection.
     data['destination'].update(city=option.city, province=option.province, country=option.country,
-        selection_mode='explicit', selection_intent='EXPLICIT', selection_authority='user',
+        selection_authority='USER', destination_source='user',
         selection_provenance=dict(source='user', evidence='Selected option ' + option.option_id,
             episode_id=question.episode_id, question_id=question.question_id))
     data['meta']['field_sources'].update({'destination.city': 'user', 'destination.selection_mode': 'user'})
@@ -83,13 +86,13 @@ def accept_answer(previous, parsed, question, raw, supplied=None):
             resolved.append(path)
         elif (parsed.meta.field_decisions.get(path) in {'UNKNOWN', 'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE'}
               or supplied and path in supplied.declared_unknown_fields
-              or path == 'destination.city' and parsed.destination.selection_intent in {'USER_UNKNOWN', 'UNKNOWN'}):
+              or path == 'destination.city' and parsed.destination.selection_intent == 'USER_UNKNOWN'):
             unknown.append(path)
     update = None
     if question.kind == 'destination_choice' and not selected:
         d = parsed.destination
         if d != previous.destination and (
-                d.selection_authority in {'user', 'delegated'} or d.selection_intent in {'USER_UNKNOWN', 'UNKNOWN'}):
+                d.selection_authority in {'USER', 'AGENT', 'SYSTEM'} or d.selection_intent == 'USER_UNKNOWN'):
             update = d
         elif 'destination.city' not in unknown:
             raise InvalidAnswer('Response is neither an option nor a parser-confirmed destination update')
@@ -102,7 +105,7 @@ def accept_answer(previous, parsed, question, raw, supplied=None):
         confirmed_proposal_id=supplied.confirmed_proposal_id if supplied else None,
         constraint_confirmed=confirmed)
     answer.validate_for(question)
-    if parsed.destination.selection_authority != 'none' and any(
+    if parsed.destination.selection_authority is not None and any(
             path.startswith('destination.') for path in question.fields):
         data = parsed.model_dump()
         provenance = data['destination']['selection_provenance']

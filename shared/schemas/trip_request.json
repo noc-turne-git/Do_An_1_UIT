@@ -259,25 +259,47 @@
           "default": "UNSPECIFIED",
           "enum": [
             "EXPLICIT",
+            "USER_UNKNOWN",
             "ANY_DESTINATION",
             "DELEGATE_SELECTION",
-            "USER_UNKNOWN",
-            "UNSPECIFIED",
-            "ANY",
-            "UNKNOWN"
+            "UNSPECIFIED"
           ],
           "title": "Selection Intent",
           "type": "string"
         },
         "selection_authority": {
-          "default": "none",
-          "enum": [
-            "none",
-            "user",
-            "delegated"
+          "anyOf": [
+            {
+              "enum": [
+                "USER",
+                "AGENT",
+                "SYSTEM"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "Selection Authority",
-          "type": "string"
+          "default": null,
+          "title": "Selection Authority"
+        },
+        "destination_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "user",
+                "AGENT_DELEGATED",
+                "SYSTEM_DEFAULT"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Destination Source"
         },
         "selection_provenance": {
           "anyOf": [
@@ -503,13 +525,10 @@
     },
     "SelectionProvenance": {
       "additionalProperties": false,
+      "description": "Audit evidence for a user's stated intent or answer.\n\nThis deliberately is not the source of a resolved destination.  That is\nrepresented by ``destination_source`` on ``SelectionPolicy``.",
       "properties": {
         "source": {
-          "enum": [
-            "user",
-            "default",
-            "inferred"
-          ],
+          "const": "user",
           "title": "Source",
           "type": "string"
         },

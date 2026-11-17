@@ -16,7 +16,7 @@ from ai.orchestration.mock_workflow import fixture
 
 def test_core_mapping():
     configure_mappers()
-    assert len(Base.metadata.tables) == 23
+    assert len(Base.metadata.tables) == 24
     assert 'state' not in WorkflowRequestRecord.__table__.c
     assert 'revision' not in WorkflowRequestRecord.__table__.c
     for cls, key in [(TripRecord, 'trip_id'), (WorkflowRequestRecord, 'request_id'),

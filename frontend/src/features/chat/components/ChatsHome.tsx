@@ -13,7 +13,7 @@ import {
 
 import { useAuthStore } from '../../auth/store/useAuthStore'
 import { chatService } from '../services/chatService'
-import { chatApi, type ChatMessage } from '../services/chatApi'
+import { chatApi, type ChatMessage, type ChatTurnContext } from '../services/chatApi'
 import { useTrips } from '../../trip'
 import { useCreateTrip } from '../../trip/hooks/useTrips'
 import {
@@ -48,14 +48,16 @@ export function ChatsHome() {
   const [tripField, setTripField] = useState<TripField | null>(null)
   const [searchParams, setSearchParams] = useSearchParams()
   const conversationId = searchParams.get('conversation_id') ?? searchParams.get('chatTrip') ?? undefined
-  const authUserId = useAuthStore((state) => state.user?.id)
+  const authUserId = useAuthStore((state) => state.user?.id ?? 'anonymous')
   const [sending, setSending] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [chatError, setChatError] = useState('')
+  const [turnContext, setTurnContext] = useState<Omit<ChatTurnContext, 'input_id'> | null>(null)
+  const [retryTurn, setRetryTurn] = useState<{ input_id: string; content: string } | null>(null)
   const history = useQuery({
     queryKey: ['chat', 'messages', authUserId, conversationId],
     queryFn: () => chatApi.history(conversationId!),
-    enabled: !!conversationId && !!authUserId,
+    enabled: !!conversationId,
     retry: false,
   })
 
@@ -103,6 +105,7 @@ export function ChatsHome() {
     event.preventDefault()
     if (!prompt.trim() || sending || history.isFetching) return
     const content = prompt.trim()
+    const inputId = retryTurn?.content === content ? retryTurn.input_id : crypto.randomUUID()
     setPendingMessage({
       message_id: `pending-${crypto.randomUUID()}`,
       conversation_id: conversationId ?? '',
@@ -114,7 +117,10 @@ export function ChatsHome() {
     setSending(true)
     setChatError('')
     try {
-      const message = await chatApi.send(content, conversationId)
+      const message = await chatApi.send(content, conversationId, {
+        input_id: inputId,
+        ...(turnContext ?? {}),
+      })
       queryClient.setQueryData<ChatMessage[]>(
         ['chat', 'messages', authUserId, message.conversation_id],
         (current = []) => [
@@ -125,6 +131,15 @@ export function ChatsHome() {
         ],
       )
       setPendingMessage(null)
+      setRetryTurn(null)
+      const openQuestion = message.questions.find((question) => question.status === 'open')
+      setTurnContext(message.workflow_id ? {
+        workflow_id: message.workflow_id,
+        ...(message.episode_id ? { episode_id: message.episode_id } : {}),
+        ...(openQuestion?.question_id ? { question_id: openQuestion.question_id } : {}),
+        expected_revision: message.revision,
+        ...(message.transitions === null ? {} : { expected_transitions: message.transitions }),
+      } : null)
       if (!conversationId) {
         const next = new URLSearchParams(searchParams)
         next.delete('chatTrip')
@@ -133,6 +148,7 @@ export function ChatsHome() {
       }
     } catch (error) {
       setPendingMessage(null)
+      setRetryTurn({ input_id: inputId, content })
       setPrompt(content)
       setChatError(error instanceof Error ? error.message : 'Không thể gửi tin nhắn.')
     } finally {
@@ -184,7 +200,7 @@ export function ChatsHome() {
         <section id="chat-panel" className="relative flex w-[var(--chat-width)] min-w-0 shrink-0 items-center justify-center bg-white max-[900px]:w-full max-[900px]:min-h-[min(650px,calc(100vh-60px))]">
           {conversationId || sending ? (
             <div className="absolute inset-x-0 top-0 bottom-36 overflow-y-auto px-7 py-8 max-[540px]:px-4" aria-live="polite">
-              {history.isPending && authUserId && <p>Đang tải tin nhắn...</p>}
+              {history.isPending && <p>Đang tải tin nhắn...</p>}
               <div className="mx-auto flex w-full max-w-[800px] flex-col gap-7">
                 {[...(history.data ?? []), ...(pendingMessage ? [pendingMessage] : [])].map((message) => {
                   const isUser = message.role === 'user'

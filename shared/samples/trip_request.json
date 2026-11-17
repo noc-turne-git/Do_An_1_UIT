@@ -2,7 +2,8 @@
   "schema_version": "1.0",
   "destination": {
     "selection_intent": "EXPLICIT",
-    "selection_authority": "user",
+    "selection_authority": "USER",
+    "destination_source": "user",
     "selection_provenance": {"source": "user", "evidence": "User specified Đà Lạt"},
     "selection_mode": "explicit",
     "city": "Đà Lạt",

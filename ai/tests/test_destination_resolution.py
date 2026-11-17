@@ -83,10 +83,12 @@ class Store:
 
 def request(intent='ANY_DESTINATION'):
     data = fixture('trip_request')
-    authority = 'user' if intent == 'EXPLICIT' else 'delegated' if intent in {
-        'ANY', 'ANY_DESTINATION', 'DELEGATE_SELECTION'} else 'none'
+    authority = {'EXPLICIT': 'USER', 'USER_UNKNOWN': 'USER',
+                 'ANY_DESTINATION': 'USER', 'DELEGATE_SELECTION': 'AGENT'}.get(intent)
+    source = 'user' if intent == 'EXPLICIT' else None
     data['destination'].update(selection_intent=intent, selection_authority=authority,
-        selection_provenance=dict(source='user', evidence='User intent: ' + intent) if authority != 'none' else None,
+        destination_source=source,
+        selection_provenance=dict(source='user', evidence='User intent: ' + intent) if authority else None,
         selection_mode='explicit' if intent == 'EXPLICIT' else 'implicit',
         city=data['destination']['city'] if intent == 'EXPLICIT' else None,
         province=None, country=None)
@@ -131,15 +133,15 @@ def answer(run, **changes):
 def test_intent_status_matrix(intent, status):
     graph, store, components, data = setup([result(status)], intent)
     run = execute(graph, data)
-    if status == 'no_valid_candidate' or intent == 'DELEGATE_SELECTION' and status == 'needs_user_choice':
+    if status == 'no_valid_candidate' or status == 'needs_user_choice' and intent in {'EXPLICIT', 'DELEGATE_SELECTION'}:
         assert run.state.status == 'failed'
         assert not run.pending_questions
-    elif status == 'selected' and intent in {'EXPLICIT', 'ANY_DESTINATION', 'DELEGATE_SELECTION'}:
+    elif status == 'selected' and intent in {'EXPLICIT', 'DELEGATE_SELECTION'}:
         assert run.state.status == 'completed', run.errors
         assert run.state.destination_round == run.state.clarification_round == 0
         selected = run.outputs['destination_agent']
-        assert selected.selection_method == ('USER_EXPLICIT' if intent == 'EXPLICIT' else 'DELEGATED')
-        assert selected.selection_provenance.source == ('user' if intent == 'EXPLICIT' else 'default')
+        assert selected.selection_method == ('USER_EXPLICIT' if intent == 'EXPLICIT' else 'AGENT_DELEGATED')
+        assert selected.destination_source == ('user' if intent == 'EXPLICIT' else 'AGENT_DELEGATED')
     else:
         assert run.state.status == 'clarifying', run.errors
         assert run.pending_questions[0].status == 'open'
@@ -162,8 +164,8 @@ def test_any_all_info_choice_sequences_wait_for_last_answer_then_resolve_once(se
     assert components.destination_agent.select.await_count == 3 and store.claims == 1
     selected = final.outputs['destination_agent']
     assert selected.selected_candidate_id == 'dalat'  # rank 1 is second in array
-    assert selected.selection_method == 'ANY_DEFAULT' and selected.selection_provenance.source == 'default'
-    assert final.outputs['request_parser'].destination.selection_provenance.source == 'user'
+    assert selected.selection_method == 'SYSTEM_DEFAULT' and selected.destination_source == 'SYSTEM_DEFAULT'
+    assert final.outputs['request_parser'].destination.destination_source == 'SYSTEM_DEFAULT'
     assert final.state.destination_round == 2 and final.state.clarification_round == 0
     assert execute(graph, data, previous=final) == final
 
@@ -228,7 +230,7 @@ def test_choice_matches_exact_snapshot_and_does_not_trigger_final_resolve():
     final = execute(graph, data, previous=second, answer=a)
     assert final.state.status == 'completed', final.errors
     assert final.outputs['destination_agent'].selection_method == 'USER_CHOICE'
-    assert final.outputs['request_parser'].destination.selection_authority == 'user'
+    assert final.outputs['request_parser'].destination.selection_authority == 'USER'
     assert final.state.destination_round == 2 and store.claims == 0
 
 
@@ -244,7 +246,7 @@ def test_unrecognized_option_keeps_question_open_but_new_explicit_destination_is
     assert final.state.status == 'completed', final.errors
     assert components.destination_agent.select.await_count == 2
     assert final.outputs['destination_agent'].selection_method == 'USER_EXPLICIT'
-    assert final.outputs['destination_agent'].selection_provenance.source == 'user'
+    assert final.outputs['destination_agent'].destination_source == 'user'
     assert store.answers[0].destination_update.city == new['destination']['city']
 
 

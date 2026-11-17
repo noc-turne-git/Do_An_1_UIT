@@ -186,8 +186,8 @@ class ClarificationRepository(OwnedRepository):
             episode = self.episode(request_id, episode_id)
             self._active(request, episode)
             policy = SelectionPolicy.model_validate(episode.selection_policy)
-            if policy.selection_intent not in {'ANY', 'ANY_DESTINATION'} or policy.selection_authority != 'delegated':
-                conflict('Only delegated ANY may claim final resolution')
+            if policy.selection_intent != 'ANY_DESTINATION' or policy.selection_authority != 'USER':
+                conflict('Only exhausted ANY_DESTINATION with initial USER authority may claim final resolution')
             if episode.final_resolve_status != 'not_started':
                 if episode.final_resolve_id != operation_id:
                     conflict('Final resolve operation already exists')
@@ -207,15 +207,30 @@ class ClarificationRepository(OwnedRepository):
         with self.session.begin_nested():
             request = self.request(request_id, lock=True)
             episode = self.episode(request_id, episode_id)
-            self._active(request, episode)
             payload = policy.model_dump(mode='json')
+            if payload == episode.selection_policy:
+                return self.contract(episode)
+            self._active(request, episode)
             if payload != episode.selection_policy:
-                if self.questions(request_id, open_only=True) or episode.final_resolve_status != 'not_started':
+                if self.questions(request_id, open_only=True) or episode.final_resolve_status == 'claimed':
                     conflict('Cannot change intent while a question or final resolve is open')
                 episode.selection_policy = payload
                 self.session.flush()
                 self._snapshot(request)
             return self.contract(episode)
+
+    def supersede_questions(self, request_id):
+        with self.session.begin_nested():
+            request = self.request(request_id, lock=True)
+            self._active(request, self.episode(request_id))
+            for row in self.session.scalars(select(ClarificationQuestionRecord).where(
+                    ClarificationQuestionRecord.request_id == request_id,
+                    ClarificationQuestionRecord.episode_id == request.active_episode_id,
+                    ClarificationQuestionRecord.status == 'open')):
+                row.status = 'superseded'
+                row.payload = dict(row.payload, status='superseded')
+            self.session.flush()
+            self._snapshot(request)
 
     def complete_final_resolve(self, request_id, episode_id, operation_id, result: DestinationResult):
         result = DestinationResult.model_validate(result.model_dump()).require_canonical_recovery()
@@ -255,7 +270,7 @@ class ClarificationRepository(OwnedRepository):
     def new_workflow_after_failed(self, request_id, destination: Destination, *, raw_prompt: str):
         from app.repositories.artifacts import ArtifactRepository
         destination = Destination.model_validate(destination.model_dump())
-        if destination.selection_intent != 'EXPLICIT' or destination.selection_authority != 'user' or destination.selection_mode != 'explicit' or not destination.city or not destination.city.strip():
+        if destination.selection_intent != 'EXPLICIT' or destination.selection_authority != 'USER' or destination.selection_mode != 'explicit' or not destination.city or not destination.city.strip():
             conflict('A new explicit user destination is required')
         with self.session.begin_nested():
             old = self.request(request_id, lock=True)
@@ -265,15 +280,8 @@ class ClarificationRepository(OwnedRepository):
             seed = artifacts.latest(request_id, 'trip_request')
             if seed is None:
                 conflict('No validated TripRequest available to seed the new workflow')
-            data = TripRequest.model_validate(seed.payload).model_dump(mode='json')
-            data['destination'] = destination.model_dump(mode='json')
-            for key in ('field_sources', 'field_confidences', 'field_decisions'):
-                data['meta'][key] = {k: v for k, v in data['meta'].get(key, {}).items() if not k.startswith('destination.')}
-            data['meta']['field_sources'].update({'destination.city': 'user', 'destination.selection_mode': 'user'})
-            data['meta']['raw_prompt'] = raw_prompt
-            data['meta']['parser_status'] = None
-            data['missing_fields'] = []
-            value = TripRequest.model_validate(data)
+            from ai.orchestration.turns import seed_after_failed
+            value = seed_after_failed(TripRequest.model_validate(seed.payload), destination, raw_prompt)
             new = RequestRepository(self.session, self.user_id).create(old.trip_id, schema_version=value.schema_version)
             policy = SelectionPolicy.model_validate(destination.model_dump(include=set(SelectionPolicy.model_fields)))
             episode = self.start_episode(new.request_id, policy)

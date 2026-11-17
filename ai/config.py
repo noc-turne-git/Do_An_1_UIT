@@ -23,6 +23,7 @@ class AISettings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_base_url: str | None = None
     openai_model: str | None = None
+    openai_include_encrypted_reasoning: bool = False
     llm_timeout_seconds: float = Field(default=30, gt=0)
 
     def build_clarification_policy(self) -> ClarificationPolicy:
@@ -38,3 +39,8 @@ class AISettings(BaseSettings):
     @classmethod
     def optional_openai_setting(cls, value):
         return value.strip() or None if isinstance(value, str) else value
+
+    @field_validator('llm_provider', mode='before')
+    @classmethod
+    def normalize_llm_provider(cls, value):
+        return value.strip().lower() if isinstance(value, str) else value

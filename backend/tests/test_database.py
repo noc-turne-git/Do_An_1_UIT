@@ -462,15 +462,97 @@ def test_http_graph_real_postgres(database):
         assert response.json()['state']['status'] == 'clarifying'
         assert client.get(url).json()['status'] == 'clarifying'
         assert client.get(url + '/result').status_code == 409
+        question = response.json()['pending_questions'][0]
         response = client.post(url + '/mock-run', json={
             'trip_request': fixture('trip_request'), 'answer_raw': 'Da Lat',
-            'expected_transitions': response.json()['transitions']})
+            'expected_transitions': response.json()['transitions'],
+            'episode_id': question['episode_id'], 'question_id': question['question_id']})
         assert response.status_code == 200, response.text
         assert response.json()['state']['status'] == 'completed'
         assert client.get(url + '/result').json() == response.json()['final_result']
         assert client.get(url + '/run').json()['history'] == response.json()['history']
         application.dependency_overrides[get_current_user_id] = uuid4
         assert client.get(url + '/run').status_code == 404
+
+
+@pytest.mark.postgres
+def test_chat_turn_idempotency_persists_one_workflow_episode_and_response(database, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    from app.api.auth import get_current_user_id
+    from app.db.session import get_session
+    from app.db.models import (ConversationRecord, ConversationTurnRecord,
+        DestinationEpisodeRecord, MessageRecord)
+
+    user = uuid4()
+    with database.engine.begin() as connection:
+        connection.execute(text('INSERT INTO auth.users(id) VALUES (:id)'), {'id': user})
+    value = TripRequest.model_validate(fixture('trip_request'))
+    value.destination.city = None
+
+    async def deterministic_turn(settings, *, graph, previous, current_date, **kwargs):
+        return await graph.run_turn(value, current_date=current_date, previous=previous)
+
+    monkeypatch.setattr('app.api.chat.run_turn', deterministic_turn)
+    application = create_app(Settings(_env_file=None, database_url=None))
+    application.dependency_overrides[get_current_user_id] = lambda: user
+    application.dependency_overrides[get_session] = database.session
+    input_id = uuid4()
+    body = {'input_id': str(input_id), 'content': 'Tôi muốn lên kế hoạch chuyến đi'}
+    with TestClient(application) as client:
+        first = client.post('/api/v1/chat/messages', json=body)
+        second = client.post('/api/v1/chat/messages', json=body)
+    assert first.status_code == second.status_code == 201
+    assert first.json() == second.json()
+    payload = first.json()
+    assert payload['workflow_status'] == 'clarifying'
+    assert payload['workflow_id'] and payload['episode_id']
+    assert payload['remaining_destination_rounds'] == 1
+    assert len(payload['questions']) == 1
+    with database.sessions.begin() as session:
+        conversation = session.scalar(select(ConversationRecord).where(ConversationRecord.user_id == user))
+        assert conversation is not None
+        assert session.scalar(select(func.count()).select_from(ConversationTurnRecord).where(
+            ConversationTurnRecord.conversation_id == conversation.conversation_id)) == 1
+        assert session.scalar(select(func.count()).select_from(WorkflowRequestRecord).where(
+            WorkflowRequestRecord.request_id == conversation.request_id)) == 1
+        assert session.scalar(select(func.count()).select_from(DestinationEpisodeRecord).where(
+            DestinationEpisodeRecord.request_id == conversation.request_id)) == 1
+        assert session.scalar(select(func.count()).select_from(MessageRecord).where(
+            MessageRecord.conversation_id == conversation.conversation_id)) == 2
+        assert conversation.request_id == UUID(payload['workflow_id'])
+        assert conversation.active_episode_id == UUID(payload['episode_id'])
+
+
+@pytest.mark.postgres
+def test_persisted_completed_edit_reuses_workflow_and_episode(database):
+    from ai.orchestration.turns import ParsedTurn
+    user, trip_id, request_id = seed(database)
+    source = TripRequest.model_validate(fixture('trip_request'))
+    with database.sessions.begin() as session:
+        graph = LangGraphOrchestrator(mock_components(), defaults=fixture('planner_defaults'),
+            persistence=WorkflowPersistence(session, user))
+        completed = asyncio.run(graph.run_turn(source, current_date=date(2026, 11, 8),
+            trip_id=trip_id, request_id=request_id)).run
+        assert completed.state.status == 'completed'
+        episode_id = completed.state.destination_episode.episode_id
+
+    revised = source.model_copy(deep=True)
+    revised.travelers.adults += 1
+    async def parser(previous, content, question, workflow):
+        return ParsedTurn(revised)
+    with database.sessions.begin() as session:
+        persistence = WorkflowPersistence(session, user)
+        previous = persistence.load_graph(request_id)
+        graph = LangGraphOrchestrator(mock_components(), defaults=fixture('planner_defaults'),
+            persistence=persistence)
+        updated = asyncio.run(graph.run_turn(previous=previous, content='Thêm một người lớn',
+            parser=parser, current_date=date(2026, 11, 8))).run
+        assert updated.state.status == 'completed', updated.errors
+        assert updated.state.request_id == request_id
+        assert updated.state.destination_episode.episode_id == episode_id
+        assert updated.state.destination_round == completed.state.destination_round
+        assert len(updated.user_updates) == 1
 
 
 @pytest.mark.postgres
@@ -632,6 +714,33 @@ def test_canonical_database_slot_constraint_and_concurrent_retry(database):
 
 
 @pytest.mark.postgres
+def test_concurrent_answers_accept_only_one_question_identity(database):
+    from concurrent.futures import ThreadPoolExecutor
+    from canonical_cases import start, question, answer
+    from app.repositories.clarifications import ClarificationRepository
+    user, _, request, ep = start(database, seed)
+    q = question(ep, 'destination_info', 1)
+    with database.sessions.begin() as session:
+        ClarificationRepository(session, user).issue(request, q)
+
+    answers = [answer(q), answer(q)]
+    def submit(value):
+        try:
+            with database.sessions.begin() as session:
+                ClarificationRepository(session, user).answer(request, value)
+            return 'accepted'
+        except (ApplicationError, DBAPIError):
+            return 'stale'
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(submit, answers)) == ['accepted', 'stale']
+    with database.sessions.begin() as session:
+        repo = ClarificationRepository(session, user)
+        assert repo.questions(request, open_only=True) == []
+        assert len(repo.answers(request)) == 1
+
+
+@pytest.mark.postgres
 def test_canonical_final_resolve_claim_survives_restart(database):
     from canonical_cases import start, question, answer
     from app.repositories.clarifications import ClarificationRepository
@@ -682,7 +791,7 @@ def test_canonical_failed_workflow_new_identity_and_seed(database):
     with database.sessions.begin() as session:
         before = session.execute(text('SELECT to_jsonb(w) FROM workflow_requests w WHERE request_id=:id'), {'id': request}).scalar_one()
         destination = Destination.model_validate(source.destination.model_dump() | dict(city='Hue',
-            selection_intent='EXPLICIT', selection_authority='user',
+            selection_intent='EXPLICIT', selection_authority='USER', destination_source='user',
             selection_provenance=dict(source='user', evidence='Go to Hue')))
         new_id, new_ep, new_input = ClarificationRepository(session, user).new_workflow_after_failed(
             request, destination, raw_prompt='Go to Hue')
@@ -719,7 +828,7 @@ def test_canonical_legacy_adoption_preserves_budget(database):
         assert legacy.state.destination_episode is None
         episode = ClarificationRepository(session, user).start_episode(request, SelectionPolicy())
         assert episode.destination_round == 1
-        assert episode.selection_intent == 'UNSPECIFIED' and episode.selection_authority == 'none'
+        assert episode.selection_intent == 'UNSPECIFIED' and episode.selection_authority is None
     with database.engine.connect() as connection:
         assert connection.execute(text('SELECT active_episode_id FROM workflow_requests WHERE request_id=:id'),
             {'id': database.pre_upgrade_request_id}).scalar_one() is None
@@ -796,7 +905,9 @@ def test_canonical_supabase_alembic_schema_parity(database):
                 for path in [ROOT / 'supabase' / 'schema.sql',
                              ROOT / 'supabase' / 'migrations' / '20261107_clarification_round_kinds.sql',
                              ROOT / 'supabase' / 'migrations' / '20261107_canonical_episodes.sql',
-                             ROOT / 'supabase' / 'migrations' / '20261108_destination_responses.sql']:
+                             ROOT / 'supabase' / 'migrations' / '20261108_destination_responses.sql',
+                             ROOT / 'supabase' / 'migrations' / '20261108_conversation_lifecycle.sql',
+                             ROOT / 'supabase' / 'migrations' / '20261117_five_intent_destination_policy.sql']:
                     cursor.execute(path.read_text(encoding='utf-8'))
                 connection.commit()
         def fingerprint(engine):
@@ -861,7 +972,7 @@ def test_destination_graph_final_resolve_durable_across_sessions(database, seque
     final = turn(True)
     assert final.state.status == 'completed', final.errors
     assert final.outputs['destination_agent'].selected_candidate_id == 'dalat'
-    assert final.outputs['destination_agent'].selection_method == 'ANY_DEFAULT'
+    assert final.outputs['destination_agent'].selection_method == 'SYSTEM_DEFAULT'
     assert len(seen_operations) == 1 and components.destination_agent.select.await_count == 3
     with database.sessions() as session:
         restored = WorkflowPersistence(session, user).load_graph(request_id)

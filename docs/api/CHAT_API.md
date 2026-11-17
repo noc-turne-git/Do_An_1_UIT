@@ -2,17 +2,19 @@
 
 ## Lifecycle
 
-Chat home uses `conversation_id` in the URL. First send creates only a Conversation
-and a user Message. Further messages reference the same Conversation; no Trip is
-created by chat sends, regardless of the number of turns. Reloading the URL restores
-the latest 100 messages. Legacy `chatTrip` bookmarks are accepted because migration
-reuses each old trip UUID as its Conversation UUID.
+Chat home uses `conversation_id` in the URL. A planning turn creates and associates a
+Trip, WorkflowRequest and canonical destination episode in the same transaction as
+its messages and turn receipt. Advice and ordinary conversation preserve the current
+planning state. Reloading the URL restores the latest 100 messages and the active
+workflow can be restored from its relational state plus GraphRun snapshot.
 
-Chat now calls the existing AgentHarness/OpenAILLMAdapter, saves an assistant reply
-and a validated draft in conversations.trip_request on every turn. It never calls
-prepare-trip or starts LangGraph, Destination, Recommendation, Budget or Planner.
-Existing conversation rows are locked to serialize turns. The parser sees the last
-12 messages, previous_request and the current date in Asia/Ho_Chi_Minh.
+Every transport calls the same `run_turn` path. The parser only extracts and merges
+fields; Graph owns routing, question issuance, answer history and workflow lifecycle.
+A referenced answer is checked against workflow, episode and open question identity
+before parser execution. Closed, superseded, cross-episode and terminal answers return
+409 and cannot become a new explicit input. Existing conversation rows are locked to
+serialize turns. The parser sees the last 12 messages, previous_request, active question
+snapshot, workflow context and the current date in Asia/Ho_Chi_Minh.
 
 ## API contract
 
@@ -20,16 +22,25 @@ All routes require `Authorization: Bearer <Supabase access token>`. Ownership co
 from verified authentication, never from request bodies. Unknown/foreign IDs return 404.
 
 - POST `/api/v1/chat/conversations`: no body; creates an empty conversation (201).
-- POST `/api/v1/chat/messages`: `{ "content": "Đi Đà Lạt", "conversation_id": null }`.
+- POST `/api/v1/chat/messages`: `{ "input_id": "<uuid>", "content": "Đi Đà Lạt",
+  "conversation_id": null, "workflow_id": null, "episode_id": null,
+  "question_id": null, "expected_revision": null, "expected_transitions": null }`.
   Omitting conversation_id creates one atomically with the first message (201).
   Response: `{ message_id, conversation_id, role, content, created_at, assistant,
-  parser_status, missing_fields, error_code }`. assistant is a persisted Message.
+  parser_status, missing_fields, error_code, input_id, revision, workflow_id,
+  episode_id, workflow_status, questions, clarification_round, destination_round,
+  remaining_destination_rounds, selection_policy, transitions }`. The full issued
+  question/options snapshot and selection authority are returned for the UI. A response
+  can have `remaining_destination_rounds=0` while its second question remains open.
+  `input_id` is an idempotency identity: an identical committed retry returns the stored
+  response, while reuse with different content returns 409.
   Only user messages can be submitted. Text is trimmed, nonblank, max 10,000 characters.
 - GET `/api/v1/chat/conversations/{id}/messages?limit=100`: latest 1–100 messages,
   returned chronologically. Replaces the former trip-based history route.
 - GET `/api/v1/chat/conversations/{id}`: `{ conversation_id, trip_id, request_id,
-  trip_request }`. trip_request contains the latest draft; trip_id/request_id remain
-  null until explicit preparation succeeds.
+  active_episode_id, revision, trip_request }`.
+- GET `/api/v1/chat/conversations/{id}/workflows`: returns current and historical
+  workflow identities, active episode identities and statuses for the conversation trip.
 - POST `/api/v1/chat/conversations/{id}/prepare-trip`:
   `{ "trip_request": <complete TripRequest object> }`.
   This is a structured handoff/testing endpoint, not an LLM call. Pydantic checks
@@ -51,8 +62,8 @@ trip_id and the stored trip_request once real planning components are ready.
 
 ## Database upgrade
 
-For an EXISTING database on the previous schema, run once as schema owner:
-`backend/supabase/migrations/20261105_conversations.sql` via Supabase SQL Editor
+For an EXISTING database on the previous schema, apply the sequential migrations through
+`backend/supabase/migrations/20261108_conversation_lifecycle.sql` via Supabase SQL Editor
 or psql with ON_ERROR_STOP enabled. It is transactional: failures roll back the DDL
 and backfill. Do not rerun the entire schema.sql on an existing database and do not
 use the obsolete Alembic migration. This migration has not been applied automatically.
@@ -104,15 +115,16 @@ console chat.message_committed/chat.message_rolled_back confirm persistence.
 AI_LOG_FILE, LOG_MAX_BYTES and LOG_BACKUP_COUNT configure location/rotation
 (default 5 MiB, 5 backups). Existing older log lines are preserved. Use one backend
 worker per log file. Tokens and API keys must never be logged.
-Streaming and idempotency keys for message sends are not implemented. After an ambiguous timeout,
-reload history before retrying a send to avoid duplicates.
+Streaming is not implemented. Clients must retain `input_id` across an ambiguous timeout;
+the receipt prevents a duplicate committed turn, workflow or episode.
 
 ## Real parser configuration and semantics
 
 Set backend/.env LLM_PROVIDER=openai, OPENAI_MODEL and OPENAI_API_KEY (or
 LLM_MODEL/LLM_API_KEY); OPENAI_BASE_URL optionally selects a compatible provider.
 Chat does not depend on AGENT_RUNTIME_ENABLED. Mock mode without scripted responses
-returns a safe error reply, not a fabricated request. No new DB columns are needed.
+returns a safe error reply, not a fabricated request. The lifecycle migration adds the
+conversation association, revision and durable `conversation_turns` receipt table.
 
 The LLM returns a Vietnamese summary, field changes and grouped follow-up questions.
 The server merges changed fields only, validates TripRequest and filters questions
@@ -128,9 +140,10 @@ Adults/children counts cannot be delegated and must total at least one.
 
 clarifying = incomplete collection; ready = collection completed, including explicit
 delegation; error = this turn failed and the previous validated values survived.
-ready creates no Trip/itinerary and may still contain delegated nulls. The existing
-strict prepare-trip gate rejects unresolved executable values until a future stage
-resolves them. Empty chat metadata is omitted from legacy workflow artifacts.
+ready can advance the associated workflow and may still contain delegated nulls that
+the destination policy resolves. Failed workflows are terminal: a new explicit
+destination creates a new workflow and episode at destination_round=0 while preserving
+the failed workflow history and the approved non-destination TripRequest baseline.
 
 Inspect logs from repository root:
 
@@ -140,6 +153,6 @@ Get-Content ai/logs/execution.jsonl -Tail 100 | Select-String 'chat.parser_turn'
 
 Live smoke test: sign in, send a request, answer questions, then try uncertainty,
 flexibility, AI delegation and deferral for a preference. Revise the dates. Inspect
-the same conversation's trip_request and log per turn; trips/workflow_requests
-counts must stay unchanged. Scripted tests cover parser/state contracts and errors,
+the same conversation's trip_request, workflow/episode associations and log per turn.
+Scripted tests cover parser/state contracts and errors,
 not a live model's Vietnamese interpretation accuracy.

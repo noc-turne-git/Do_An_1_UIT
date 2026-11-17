@@ -1,4 +1,4 @@
-"""Chat-only requirement collection. Never runs a planning workflow."""
+"""Extract and merge user requirements; lifecycle and issuance belong to Graph."""
 import json
 from copy import deepcopy
 from datetime import datetime
@@ -120,35 +120,38 @@ def apply_changes(previous, output, *, current_date=None):
                     'UNKNOWN' if 'UNKNOWN' in decisions else None)
         if city and city[0] == 'SPECIFIED' and isinstance(city[1], str) and city[1].strip():
             payload['destination'].update(selection_intent='EXPLICIT',
-                selection_authority='user', selection_mode='explicit',
+                selection_authority='USER', destination_source='user', selection_mode='explicit',
                 selection_provenance=dict(source='user', evidence='destination.city=' + city[1]))
             payload['meta']['field_sources']['destination.selection_mode'] = 'user'
             payload['meta']['field_decisions']['destination.selection_mode'] = 'SPECIFIED'
         elif decision in {'UNKNOWN', 'FLEXIBLE', 'AI_DECIDE'}:
             intent = {'UNKNOWN': 'USER_UNKNOWN', 'FLEXIBLE': 'ANY_DESTINATION',
                       'AI_DECIDE': 'DELEGATE_SELECTION'}[decision]
-            delegated = decision != 'UNKNOWN'
+            authority = {'UNKNOWN': 'USER', 'FLEXIBLE': 'USER', 'AI_DECIDE': 'AGENT'}[decision]
             payload['destination'].update(selection_intent=intent,
-                selection_authority='delegated' if delegated else 'none',
-                selection_mode='implicit' if delegated else 'ambiguous',
-                selection_provenance=(dict(source='user', evidence='destination:' + decision)
-                                      if delegated else None), city=None)
+                selection_authority=authority, destination_source=None,
+                selection_mode='implicit' if decision != 'UNKNOWN' else 'ambiguous',
+                selection_provenance=dict(source='user', evidence='destination:' + decision), city=None)
             payload['meta']['field_sources']['destination.selection_mode'] = 'user'
             payload['meta']['field_decisions']['destination.selection_mode'] = decision
         elif city and city[1] is None:
             payload['destination'].update(selection_intent='UNSPECIFIED',
-                selection_authority='none', selection_provenance=None)
+                selection_authority=None, destination_source=None, selection_provenance=None)
         elif mode and mode[1] == 'implicit':
             # A parser's choice of resolve mode is not evidence of delegation.
             payload['destination'].update(selection_intent='UNSPECIFIED',
-                selection_authority='none', selection_provenance=None)
+                selection_authority=None, destination_source=None, selection_provenance=None)
     payload['meta']['parser_status'] = 'clarifying'
     request = TripRequest.model_validate(payload)
     request.meta.parser_status = 'clarifying' if request.missing_fields else 'ready'
     return request
 
 
-async def parse_turn(settings, *, previous, content, history, request_id, conversation_id):
+async def parse_turn(settings, *, previous, content, history, request_id, conversation_id,
+                     extraction_only=False, pending_question=None, workflow_context=None):
+    from ai.orchestration.turns import ParsedTurn
+    def result_value(value, reply, error, planning=True):
+        return ParsedTurn(value, reply, error, planning) if extraction_only else (value, reply, error)
     timezone_name = previous.trip.timezone or 'Asia/Ho_Chi_Minh'
     user_date = datetime.now(ZoneInfo(timezone_name)).date()
     definition = AgentDefinition(name='chat_request_parser', description='Travelio conversation, travel advice and trip requirements',
@@ -160,25 +163,29 @@ async def parse_turn(settings, *, previous, content, history, request_id, conver
         result = await harness.run(definition, AgentContext(request_id=request_id,
             conversation_id=conversation_id, input_data=dict(content=content, history=history,
                 previous_request=previous.model_dump(mode='json'),
+                pending_question=pending_question, workflow_context=workflow_context,
                 trip_request_schema=TripRequest.model_json_schema(),
                 current_date=user_date.isoformat(),
                 timezone=timezone_name)))
         if result.status != AgentStatus.SUCCESS:
-            return None, None, result.error.code if result.error else 'INVALID_PARSER_OUTPUT'
+            return result_value(None, None, result.error.code if result.error else 'INVALID_PARSER_OUTPUT')
         if result.output.intent != 'trip_planning':
             # Casual conversation and advice must never alter the collected
             # requirements or trigger missing-field questions.
-            return previous.model_copy(deep=True), result.output.summary, None
+            return result_value(previous.model_copy(deep=True), result.output.summary, None, False)
         if result.output.conflicting_input:
-            return None, None, 'CONFLICTING_INPUT'
+            return result_value(None, None, 'CONFLICTING_INPUT')
         try:
             request = apply_changes(previous, result.output, current_date=user_date)
         except json.JSONDecodeError:
-            return None, None, 'INVALID_PARSER_JSON'
+            return result_value(None, None, 'INVALID_PARSER_JSON')
         except ValidationError:
-            return None, None, 'INVALID_TRIP_REQUEST'
+            return result_value(None, None, 'INVALID_TRIP_REQUEST')
         except (ValueError, KeyError, TypeError):
-            return None, None, 'INVALID_PARSER_CHANGE'
+            return result_value(None, None, 'INVALID_PARSER_CHANGE')
+        if extraction_only:
+            request.meta.raw_prompt = content
+            return ParsedTurn(request, result.output.summary)
         questions = []
         covered = set()
         for followup in result.output.questions:

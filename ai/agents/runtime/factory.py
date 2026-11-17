@@ -18,7 +18,8 @@ def create_agent_harness(definition, settings, *, tools=None, skills=None,
                 raise ValueError('Configure OPENAI_MODEL or LLM_MODEL for OpenAI')
             llm = OpenAILLMAdapter(model=model, base_url=settings.openai_base_url,
                 api_key=key.get_secret_value() if key else None,
-                timeout=settings.llm_timeout_seconds, client=client)
+                timeout=settings.llm_timeout_seconds, client=client,
+                include_encrypted_reasoning=getattr(settings, 'openai_include_encrypted_reasoning', False))
         else:
             raise ValueError('Unsupported LLM provider')
     return AgentHarness(llm, tools, skills)

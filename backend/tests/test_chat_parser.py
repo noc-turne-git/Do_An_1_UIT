@@ -13,6 +13,7 @@ from shared.contracts import TripRequest
 from ai.orchestration.mock_workflow import fixture
 from ai.orchestration.request_parser import (ParserOutput, Change, apply_changes, empty_request,
                                          parse_turn)
+from ai.orchestration.turns import TurnResult
 from test_chat_api import setup_client
 
 
@@ -38,9 +39,9 @@ def test_complete_missing_and_preserving_corrections():
 
 
 @pytest.mark.parametrize('decision,intent,authority', [
-    ('UNKNOWN', 'USER_UNKNOWN', 'none'),
-    ('FLEXIBLE', 'ANY_DESTINATION', 'delegated'),
-    ('AI_DECIDE', 'DELEGATE_SELECTION', 'delegated'),
+    ('UNKNOWN', 'USER_UNKNOWN', 'USER'),
+    ('FLEXIBLE', 'ANY_DESTINATION', 'USER'),
+    ('AI_DECIDE', 'DELEGATE_SELECTION', 'AGENT'),
 ])
 def test_destination_decision_semantics(decision, intent, authority):
     request = apply_changes(empty_request(), output('destination.city', None, decision))
@@ -48,7 +49,7 @@ def test_destination_decision_semantics(decision, intent, authority):
     assert request.destination.selection_authority == authority
     assert request.destination.city is None
     assert ('destination.city' in request.missing_fields) == (decision == 'UNKNOWN')
-    assert (request.destination.selection_provenance is not None) == (authority == 'delegated')
+    assert request.destination.selection_provenance is not None
 
 
 def test_destination_unknown_with_delegation_and_explicit_change():
@@ -59,7 +60,8 @@ def test_destination_unknown_with_delegation_and_explicit_change():
     assert request.destination.selection_intent == 'DELEGATE_SELECTION'
     explicit = apply_changes(request, output('destination.city', 'Huế'))
     assert explicit.destination.selection_intent == 'EXPLICIT'
-    assert explicit.destination.selection_authority == 'user'
+    assert explicit.destination.selection_authority == 'USER'
+    assert explicit.destination.destination_source == 'user'
     assert explicit.destination.selection_provenance.source == 'user'
     assert explicit.meta.field_sources['destination.city'] == 'user'
     assert explicit.meta.field_decisions['destination.city'] == 'SPECIFIED'
@@ -67,15 +69,15 @@ def test_destination_unknown_with_delegation_and_explicit_change():
 
 def test_legacy_mode_does_not_grant_selection_and_intent_change_keeps_data():
     data = complete().model_dump()
-    for key in ('selection_intent', 'selection_authority', 'selection_provenance'):
+    for key in ('selection_intent', 'selection_authority', 'destination_source', 'selection_provenance'):
         data['destination'].pop(key, None)
     legacy = TripRequest.model_validate(data)
     assert legacy.destination.selection_intent == 'UNSPECIFIED'
     request = apply_changes(legacy, output('destination.selection_mode', 'implicit'))
-    assert request.destination.selection_authority == 'none'
+    assert request.destination.selection_authority is None
     changed = apply_changes(request, output('destination.city', None, 'UNKNOWN'))
     assert changed.destination.selection_intent == 'USER_UNKNOWN'
-    assert changed.destination.selection_authority == 'none'
+    assert changed.destination.selection_authority == 'USER'
 
 
 def test_non_destination_unknown_and_never_default_regression():
@@ -232,24 +234,22 @@ def test_harness_invalid_output_and_provider_failure():
         assert request is None and reply is None and error
 
 
-def test_api_ready_and_error_preserve_state_and_do_not_create_trip():
+def test_api_nonplanning_and_error_preserve_state_and_do_not_create_trip():
     app, session, _ = setup_client()
-    with patch('app.api.chat.parse_turn') as parser, TestClient(app) as client:
-        ready = apply_changes(complete(), ParserOutput(summary='Đã đủ thông tin.', changes=[]))
-        parser.return_value = (ready, 'Đã đủ thông tin, chưa tạo lịch trình.', None)
-        first = client.post('/api/v1/chat/messages', json={'content': 'Đi Đà Lạt'}).json()
-        assert first['parser_status'] == 'ready' and first['assistant']['role'] == 'assistant'
-        assert first['trip_summary']['role'] == 'assistant'
-        assert 'tóm tắt chuyến đi' in first['trip_summary']['content']
-        assert ready.destination.city in first['trip_summary']['content']
+    previous = empty_request()
+    with patch('app.api.chat.run_turn') as processor, TestClient(app) as client:
+        processor.return_value = TurnResult(previous, 'Đây là lời khuyên du lịch.', planning=False)
+        first = client.post('/api/v1/chat/messages', json={'content': 'Nên đi đâu mùa này?'}).json()
+        assert first['assistant']['role'] == 'assistant'
+        assert first['trip_summary'] is None
         conversation = session.add.call_args_list[0].args[0]
         session.scalar.return_value = conversation
-        parser.side_effect = ValueError('sk-private-do-not-log')
+        processor.return_value = TurnResult(None, error='PARSER_ERROR')
         second = client.post('/api/v1/chat/messages', json={
             'conversation_id': first['conversation_id'], 'content': 'Sửa ngày'}).json()
         assert second['parser_status'] == 'error'
         assert second['trip_summary'] is None
-        assert conversation.trip_request['destination'] == ready.model_dump(mode='json')['destination']
+        assert conversation.trip_request is None
         assert conversation.trip_id is None and conversation.request_id is None
 
 
@@ -257,10 +257,11 @@ def test_summary_is_saved_once_and_updated_when_ready_details_change():
     from app.db.models import MessageRecord
     app, session, _ = setup_client()
     ready = apply_changes(complete(), ParserOutput(summary='Đã đủ.', changes=[]))
-    with patch('app.api.chat.parse_turn') as parser, TestClient(app) as client:
-        parser.return_value = (ready, 'Đã ghi nhận.', None)
+    with patch('app.api.chat.run_turn') as processor, TestClient(app) as client:
+        processor.return_value = TurnResult(ready, 'Đã ghi nhận.')
         first = client.post('/api/v1/chat/messages', json={'content': 'Lên kế hoạch'}).json()
         conversation = session.add.call_args_list[0].args[0]
+        conversation.trip_request = ready.model_dump(mode='json')
         session.scalar.return_value = conversation
         saved = [c.args[0] for c in session.add.call_args_list if isinstance(c.args[0], MessageRecord)]
         assert len(saved) == 3
@@ -269,7 +270,7 @@ def test_summary_is_saved_once_and_updated_when_ready_details_change():
         unchanged = client.post('/api/v1/chat/messages', json=body).json()
         assert unchanged['trip_summary'] is None
         updated = apply_changes(ready, output('travelers.adults', 4))
-        parser.return_value = (updated, 'Đã đổi số người.', None)
+        processor.return_value = TurnResult(updated, 'Đã đổi số người.')
         changed = client.post('/api/v1/chat/messages', json=body).json()
         assert '4 người lớn' in changed['trip_summary']['content']
 
@@ -277,7 +278,7 @@ def test_summary_is_saved_once_and_updated_when_ready_details_change():
 def test_incomplete_request_does_not_emit_summary():
     app, _, _ = setup_client()
     draft = apply_changes(empty_request(), output('destination.city', 'Đà Lạt'))
-    with patch('app.api.chat.parse_turn', return_value=(draft, 'Bạn đi ngày nào?', None)), TestClient(app) as client:
+    with patch('app.api.chat.run_turn', return_value=TurnResult(draft, 'Bạn đi ngày nào?')), TestClient(app) as client:
         response = client.post('/api/v1/chat/messages', json={'content': 'Đà Lạt'})
     assert response.status_code == 201
     assert response.json()['trip_summary'] is None

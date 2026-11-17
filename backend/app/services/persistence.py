@@ -15,6 +15,48 @@ TYPES = dict(request_parser='trip_request', destination_agent='destination_resul
 
 
 class WorkflowPersistence(OwnedRepository):
+    def prepare_turn(self, request, previous, *, trip_id=None, request_id=None):
+        from app.repositories.workflows import TripRepository
+        if previous:
+            row = self.request(previous.state.request_id, lock=True)
+            if row.status == 'completed':
+                row.status = 'parsing'
+                self.session.flush()
+            return row.trip_id, row.request_id
+        if request_id is None:
+            if trip_id is None:
+                trip_id = TripRepository(self.session, self.user_id).create(title=request.destination.city).trip_id
+            request_id = RequestRepository(self.session, self.user_id).create(
+                trip_id, schema_version=request.schema_version).request_id
+        return trip_id, request_id
+
+    def ensure_episode(self, run, policy):
+        from app.repositories.clarifications import ClarificationRepository
+        repo = ClarificationRepository(self.session, self.user_id)
+        row = self.request(run.state.request_id, lock=True)
+        if row.active_episode_id:
+            return repo.contract(repo.episode(row.request_id))
+        RequestRepository(self.session, self.user_id).update_projection(run.state)
+        return repo.start_episode(row.request_id, policy)
+
+    def new_workflow_after_failed(self, previous, request):
+        from app.repositories.clarifications import ClarificationRepository
+        return ClarificationRepository(self.session, self.user_id).new_workflow_after_failed(
+            previous.state.request_id, request.destination, raw_prompt=request.meta.raw_prompt)
+
+    def supersede_questions(self, run):
+        from app.repositories.clarifications import ClarificationRepository
+        ClarificationRepository(self.session, self.user_id).supersede_questions(run.state.request_id)
+
+    def restart_completed_episode(self, run, request):
+        from app.repositories.clarifications import ClarificationRepository
+        from shared.contracts import SelectionPolicy
+        repo = ClarificationRepository(self.session, self.user_id)
+        if run.state.destination_episode and run.state.destination_episode.status == 'active':
+            repo.close_episode(run.state.request_id, run.state.destination_episode.episode_id, status='completed')
+        return repo.start_episode(run.state.request_id, SelectionPolicy.model_validate(
+            request.destination.model_dump(include=set(SelectionPolicy.model_fields))))
+
     def refresh_episode(self, run):
         from app.repositories.clarifications import ClarificationRepository
         repo = ClarificationRepository(self.session, self.user_id)
@@ -163,6 +205,15 @@ class WorkflowPersistence(OwnedRepository):
             self._sync(run)
 
     def _sync(self, run):
+        # Close the episode before the workflow becomes immutable/terminal.
+        if run.state.status in {'completed', 'failed'} and run.state.destination_episode:
+            from app.repositories.clarifications import ClarificationRepository
+            from ai.orchestration.workflow_state import StateMachine
+            repo = ClarificationRepository(self.session, self.user_id)
+            episode = repo.contract(repo.episode(run.state.request_id))
+            if episode.status == 'active':
+                episode = repo.close_episode(run.state.request_id, episode.episode_id, status=run.state.status)
+                StateMachine(run).update(destination_episode=episode, pending_questions=[], pending_fields=[])
         RequestRepository(self.session, self.user_id).update_projection(run.state)
         request_id = run.state.request_id
         if run.state.destination_episode:

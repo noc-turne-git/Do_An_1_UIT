@@ -56,12 +56,47 @@ class TripRecord(Base):
 class ConversationRecord(Base):
     __tablename__ = 'conversations'
     conversation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()'))
-    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    user_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('profiles.id', ondelete='CASCADE'), nullable=True)
+    anonymous_session_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('anonymous_sessions.anonymous_session_id', ondelete='CASCADE'), nullable=True)
     trip_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('trips.trip_id', ondelete='SET NULL'), nullable=True, unique=True)
     request_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('workflow_requests.request_id', ondelete='SET NULL'), nullable=True)
     trip_request: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    active_episode_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    revision: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('0'))
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False)
-    __table_args__ = (sa.Index('conversations_user_idx', 'user_id'),)
+    __table_args__ = (sa.Index('conversations_user_idx', 'user_id'),
+        sa.Index('conversations_anonymous_session_idx', 'anonymous_session_id'),
+        sa.CheckConstraint('(user_id IS NOT NULL) <> (anonymous_session_id IS NOT NULL)',
+                           name='conversations_owner_check'),
+        sa.ForeignKeyConstraint(['request_id', 'active_episode_id'],
+            ['destination_episodes.request_id', 'destination_episodes.episode_id'],
+            name='conversation_active_episode_fk'),
+        sa.CheckConstraint('active_episode_id IS NULL OR request_id IS NOT NULL',
+                           name='conversation_active_episode_requires_workflow'))
+
+
+class AnonymousSessionRecord(Base):
+    __tablename__ = 'anonymous_sessions'
+    anonymous_session_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False,
+        server_default=sa.text('now()'))
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False,
+        server_default=sa.text('now()'))
+
+
+class ConversationTurnRecord(Base):
+    __tablename__ = 'conversation_turns'
+    input_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    conversation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True),
+        sa.ForeignKey('conversations.conversation_id', ondelete='CASCADE'), nullable=False)
+    input_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    response_payload: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    request_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True),
+        sa.ForeignKey('workflow_requests.request_id'), nullable=True)
+    message_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True),
+        sa.ForeignKey('messages.message_id'), nullable=True)
+    __table_args__ = (sa.Index('conversation_turns_conversation_idx', 'conversation_id'),)
 
 
 class MessageRecord(Base):

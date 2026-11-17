@@ -202,7 +202,8 @@
         "legacy",
         "open",
         "answered",
-        "cancelled"
+        "cancelled",
+        "superseded"
       ],
       "title": "Status",
       "type": "string"
@@ -211,12 +212,10 @@
       "default": "UNSPECIFIED",
       "enum": [
         "EXPLICIT",
+        "USER_UNKNOWN",
         "ANY_DESTINATION",
         "DELEGATE_SELECTION",
-        "USER_UNKNOWN",
-        "UNSPECIFIED",
-        "ANY",
-        "UNKNOWN"
+        "UNSPECIFIED"
       ],
       "title": "Intent Snapshot",
       "type": "string"

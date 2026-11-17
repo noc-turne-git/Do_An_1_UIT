@@ -79,7 +79,7 @@ Tiền nằm trong JSONB dưới dạng integer, không đổi sang float; times
 |---|---|
 | JSON/JSONC sai cú pháp | Trailing comma, smart quotes, thiếu dấu phẩy/ngoặc, `"max_candidates":100` nằm trong array, enum viết bằng dấu `/`, văn xuôi nằm trong code block. Đây là lỗi ví dụ; không suy ra thay đổi schema. Fixture TripRequest sửa cú pháp, giữ cấu trúc. |
 | selection_status | Bảng đầu nói bốn giá trị nhưng dòng thứ tư là pending_fields của WorkflowState; bảng hỏi lại sau đó thêm needs_more_info. Contract giữ cả needs_more_info vì được nêu rõ ở bảng sau, không dùng pending_fields làm status. INSUFFICIENT là request_type. Danh sách này đã chốt; routing dựa vào structured information_requests/recovery và mục đích câu hỏi. |
-| Giới hạn hỏi điểm đến | Đã chốt tại CLARIFICATION_POLICY.md: destination_info/choice chia sẻ 2 lượt theo episode; ANY có delegation chỉ default rank 1 sau final resolve, UNKNOWN/UNSPECIFIED không default. |
+| Giới hạn hỏi điểm đến | Đã chốt tại CLARIFICATION_POLICY.md: destination_info/choice chia sẻ 2 lượt theo episode; chỉ ANY_DESTINATION được system default rank 1 sau final resolve, còn USER_UNKNOWN/UNSPECIFIED không default. |
 | Agent A/B input | Ví dụ B dùng selected_destination_id nhưng DestinationResult không định nghĩa trường này. Interface nhận nguyên DestinationResult, không tự thêm selected_destination_id. |
 | TimeConstraints | Mục 3 có pace, transport_mode; ví dụ 7/8 bỏ một số trường. Giữ cấu trúc mục 3. start_location_id/end_location_id chỉ xuất hiện trong văn xuôi: giữ nullable, không tự tạo điểm thật. |
 | Schema version | Mục 10 yêu cầu mọi hợp đồng có version nhưng nhiều ví dụ không có. Thêm schema_version mặc định 1.0 ở hợp đồng cấp bước, chấp nhận major 1, từ chối major khác; object lồng không có version riêng. |

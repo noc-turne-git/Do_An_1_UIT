@@ -210,7 +210,7 @@ Những trường cần xác nhận lại nếu ko có
 
 | Trường | Điều kiện bắt buộc |
 | --- | --- |
-| destination.city / destination.selection_intent | EXPLICIT cần điểm user chỉ định; ANY cần authority delegated với provenance user. selection_mode không cấp quyền lựa chọn. |
+| destination.city / destination.selection_intent | EXPLICIT cần điểm user chỉ định (USER/user); ANY_DESTINATION bắt đầu với USER và chỉ SYSTEM/SYSTEM_DEFAULT được chọn mặc định sau final resolve. selection_mode không cấp quyền lựa chọn. |
 | trip.start_date và trip.end_date | Phải xác định được khoảng thời gian chuyến đi |
 | travelers.adults và travelers.children | Phải xác định được quy mô đoàn, ít nhất theo cách hiểu đã được xác nhận hoặc quy tắc mặc định được người dùng chấp nhận |
 | preferences.interests, preferences.pace, preferences.transport_modes | Cần để Agent B chấm mức phù hợp và Constraint Planner đặt nhịp, phương tiện; thiếu thì hỏi lại, hết lượt hỏi thì dùng mặc định của hệ thống (source = default) |
@@ -417,8 +417,9 @@ clarification_round (3); destination_info và destination_choice chia sẻ budge
 destination_round (2) của episode. needs_more_info dùng information_requests có
 purpose; no_valid_candidate dùng recovery có fields và constraint_proposal.
 Question thứ hai open vẫn được trả lời. Chỉ issuance identity mới tăng counter.
-ANY có delegation user chỉ default rank=1 sau final resolve đã persist;
-UNKNOWN/UNSPECIFIED không default. selection_mode không cấp authority.
+ANY_DESTINATION chỉ default rank=1 sau final resolve đã persist và khi authority/source
+được chuyển sang SYSTEM/SYSTEM_DEFAULT; USER_UNKNOWN/UNSPECIFIED không default.
+selection_mode không cấp authority.
 
 ## 5. Agent B và PlaceCandidate
 

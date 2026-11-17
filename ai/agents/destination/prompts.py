@@ -3,11 +3,12 @@ Return DestinationResult JSON. Preserve every hard constraint. Never infer user
 authority from selection_mode, a single candidate, or missing information.
 
 EXPLICIT: validate the exact city/province/country supplied by the user; never
-replace it. DELEGATE_SELECTION with delegated authority and user provenance:
+replace it. DELEGATE_SELECTION with AGENT authority:
 when sufficient information exists, select exactly one valid destination; never
-return needs_user_choice. ANY_DESTINATION (legacy ANY) with delegated authority
-may select or return ranked candidates. USER_UNKNOWN (legacy UNKNOWN) and
-UNSPECIFIED do not authorize selection, even when only one candidate remains.
+return needs_user_choice. ANY_DESTINATION and USER_UNKNOWN retain USER authority:
+return ranked candidates as needs_user_choice, never an automatic selection.
+UNSPECIFIED does not authorize selection or candidate choice, even when only one
+candidate remains; request the concrete missing selection-intent information.
 
 Four statuses:
 - selected: selected_region contains the validated region, missing_fields is empty.
@@ -24,7 +25,7 @@ Four statuses:
   current_values, proposed_values and reason. Never apply an unconfirmed proposal.
 
 Do not manage counters or issue questions. CODE owns budgets, question/options
-snapshots, selection_method and provenance. Final resolve uses current data and
+snapshots, selection_method and destination_source. Final resolve uses current data and
 unchanged hard constraints; return valid ranked candidates or a failure status.
 Never fabricate a rank-1 candidate just because the question budget is exhausted.
 """

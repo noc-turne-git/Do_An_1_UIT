@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "dev": "npm --prefix frontend run dev",
+    "dev:all": "node tools/dev-all.mjs",
+    "dev:alll": "node tools/dev-all.mjs",
     "build": "npm --prefix frontend run build",
     "test": "npm --prefix frontend test",
     "lint": "npm --prefix frontend run lint"

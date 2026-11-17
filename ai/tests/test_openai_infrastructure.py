@@ -87,6 +87,7 @@ def test_generic_multistep_multiple_calls_and_reasoning_continuity():
     assert sent['text']['format']['schema']['additionalProperties'] is False
     assert sent['tools'][0]['parameters']['required'] == ['value']
     assert sent['store'] is False
+    assert 'include' not in sent
 
 
 @pytest.mark.parametrize('item,code', [
@@ -203,6 +204,19 @@ def test_successful_real_sdk_transport_serialization():
                 assert result.output.value == 3 and len(seen) == 1
                 assert seen[0]['input'][1]['role'] == 'developer'
                 assert seen[0]['max_output_tokens'] == definition.limits.max_output_tokens
+    asyncio.run(check())
+
+
+def test_optional_responses_features_are_only_sent_when_enabled():
+    async def check():
+        client = FakeClient([final()])
+        definition, harness, _ = setup(client)
+        adapter = OpenAILLMAdapter(model='test-model', client=client,
+            include_encrypted_reasoning=True)
+        harness.llm = adapter
+        result = await harness.run(definition, AgentContext(request_id='r', input_data={}))
+        assert result.status == AgentStatus.SUCCESS
+        assert client.requests[0]['include'] == ['reasoning.encrypted_content']
     asyncio.run(check())
 
 

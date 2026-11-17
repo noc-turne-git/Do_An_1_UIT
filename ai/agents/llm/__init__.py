@@ -40,9 +40,10 @@ class TransientLLMError(Exception):
     """Adapter explicitly signals a retryable provider failure; message is never logged."""
 
 class ProviderError(Exception):
-    """Safe stable code, never a provider payload."""
-    def __init__(self, code):
+    """Safe stable code plus non-sensitive diagnostic metadata for internal logs."""
+    def __init__(self, code, *, diagnostic=None):
         self.code = code
+        self.diagnostic = diagnostic or {}
         super().__init__(code)
 
 class MockLLMAdapter:

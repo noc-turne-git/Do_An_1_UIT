@@ -26,13 +26,18 @@ BEGIN
       END IF;
     ELSIF d IS NOT NULL AND d <> 'null'::jsonb THEN
       IF NOT COALESCE(
-          (d->>'selection_intent' IN ('USER_UNKNOWN','UNKNOWN') AND d->>'selection_authority' = 'none') OR
-          (d->>'selection_intent' = 'EXPLICIT' AND d->>'selection_authority' = 'user'
-            AND length(trim(d->>'city')) > 0 AND d->'selection_provenance'->>'source' = 'user'
-            AND length(trim(d->'selection_provenance'->>'evidence')) > 0) OR
-          (d->>'selection_intent' IN ('ANY','ANY_DESTINATION','DELEGATE_SELECTION')
-            AND d->>'selection_authority' = 'delegated' AND d->'selection_provenance'->>'source' = 'user'
-            AND length(trim(d->'selection_provenance'->>'evidence')) > 0), false) THEN
+          (d->>'selection_intent' = 'UNSPECIFIED' AND d->>'selection_authority' IS NULL
+            AND d->>'destination_source' IS NULL) OR
+          (d->>'selection_intent' = 'EXPLICIT' AND d->>'selection_authority' = 'USER'
+            AND d->>'destination_source' = 'user' AND length(trim(d->>'city')) > 0) OR
+          (d->>'selection_intent' = 'USER_UNKNOWN' AND d->>'selection_authority' = 'USER'
+            AND coalesce(d->>'destination_source', 'user') = 'user') OR
+          (d->>'selection_intent' = 'ANY_DESTINATION' AND
+            ((d->>'selection_authority' = 'USER' AND d->>'destination_source' IS NULL) OR
+             (d->>'selection_authority' = 'USER' AND d->>'destination_source' = 'user') OR
+             (d->>'selection_authority' = 'SYSTEM' AND d->>'destination_source' = 'SYSTEM_DEFAULT'))) OR
+          (d->>'selection_intent' = 'DELEGATE_SELECTION' AND d->>'selection_authority' = 'AGENT'
+            AND (d->>'destination_source' IS NULL OR d->>'destination_source' = 'AGENT_DELEGATED')), false) THEN
         RAISE EXCEPTION 'Destination update requires a canonical parser-confirmed intent';
       END IF;
     ELSIF NOT COALESCE(NEW.payload->'declared_unknown_fields' ? 'destination.city', false) THEN

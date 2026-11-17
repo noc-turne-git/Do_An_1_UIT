@@ -47,6 +47,8 @@ class RunInput(BaseModel):
     answer_raw: str | None = None
     expected_transitions: int | None = None
     answer: AnswerHistory | None = None
+    episode_id: UUID | None = None
+    question_id: UUID | None = None
 
 
 @router.post('/trips', response_model=TripView, status_code=201)
@@ -106,14 +108,19 @@ def persist_mock_run(request_id: UUID, body: RunInput, user: UUID = Depends(get_
         previous = persistence.load_graph(request_id)
         if body.expected_transitions is not None and previous.transitions != body.expected_transitions:
             raise HTTPException(409, 'Workflow changed; reload before resuming')
+        if previous.pending_questions and body.answer is None and (
+                body.episode_id is None or body.question_id is None):
+            raise HTTPException(409, 'Answer requires the issued episode_id and question_id')
     elif row.status in {'parsing', 'planning'} and row.graph_snapshot is not None:
         previous = persistence.load_graph(request_id)
     elif row.status != 'parsing':
         raise HTTPException(409, 'Create a new request for a new run')
     graph.persistence = persistence
-    return asyncio.run(graph.run(body.trip_request,
+    return asyncio.run(graph.run_turn(body.trip_request,
             current_date=datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).date(), previous=previous,
-            answer_raw=body.answer_raw, answer=body.answer, trip_id=row.trip_id, request_id=request_id))
+            answer_raw=body.answer_raw, answer=body.answer, trip_id=row.trip_id, request_id=request_id,
+            workflow_id=request_id if previous else None, episode_id=body.episode_id,
+            question_id=body.question_id, expected_transitions=body.expected_transitions)).run
 
 
 @router.get('/requests/{request_id}/run', response_model=GraphRun)

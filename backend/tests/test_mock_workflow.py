@@ -74,7 +74,9 @@ def test_missing_stops_and_no_resume_without_answer():
 
 def test_destination_choice_stops():
     c, data = setup()
-    data["destination"].update(selection_mode="ambiguous", city=None, candidate_cities=["Đà Lạt", "Nha Trang"])
+    data["destination"].update(selection_intent="USER_UNKNOWN", selection_authority="USER",
+                               destination_source=None, selection_mode="ambiguous", city=None,
+                               candidate_cities=["Đà Lạt", "Nha Trang"])
     c.constraint_planner.build = AsyncMock()
     result = run(c, data)
     assert result.state.status == "clarifying"

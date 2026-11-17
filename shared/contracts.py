@@ -26,9 +26,10 @@ class Contract(Model):
     schema_version: str = Field(default="1.0", pattern=r"^1\.\d+$")
 
 
-SelectionIntent = Literal["EXPLICIT", "ANY_DESTINATION", "DELEGATE_SELECTION",
-                          "USER_UNKNOWN", "UNSPECIFIED", "ANY", "UNKNOWN"]
-SelectionAuthority = Literal["none", "user", "delegated"]
+SelectionIntent = Literal["EXPLICIT", "USER_UNKNOWN", "ANY_DESTINATION",
+                          "DELEGATE_SELECTION", "UNSPECIFIED"]
+SelectionAuthority = Literal["USER", "AGENT", "SYSTEM"] | None
+DestinationSource = Literal["user", "AGENT_DELEGATED", "SYSTEM_DEFAULT"] | None
 QuestionKind = Literal["trip_request", "destination_info", "destination_choice"]
 PositiveInt = Annotated[StrictInt, Field(gt=0)]
 NonEmpty = Annotated[str, Field(min_length=1, pattern=r"\S")]
@@ -36,7 +37,12 @@ TRIP_NEVER_DEFAULT = frozenset({'trip.start_date', 'trip.end_date', 'travelers.a
 
 
 class SelectionProvenance(Model):
-    source: Literal["user", "default", "inferred"]
+    """Audit evidence for a user's stated intent or answer.
+
+    This deliberately is not the source of a resolved destination.  That is
+    represented by ``destination_source`` on ``SelectionPolicy``.
+    """
+    source: Literal["user"]
     evidence: NonEmpty
     episode_id: UUID | None = None
     question_id: UUID | None = None
@@ -50,18 +56,29 @@ class SelectionProvenance(Model):
 
 class SelectionPolicy(Model):
     selection_intent: SelectionIntent = "UNSPECIFIED"
-    selection_authority: SelectionAuthority = "none"
+    selection_authority: SelectionAuthority = None
+    destination_source: DestinationSource = None
     selection_provenance: SelectionProvenance | None = None
 
     @model_validator(mode="after")
     def authority_is_explicit(self):
-        if self.selection_authority != "none":
-            allowed = ({"ANY", "ANY_DESTINATION", "DELEGATE_SELECTION"}
-                       if self.selection_authority == "delegated" else {"EXPLICIT"})
-            if self.selection_intent not in allowed:
-                raise ValueError("selection authority conflicts with intent")
-            if self.selection_provenance is None or self.selection_provenance.source != "user":
-                raise ValueError("selection authority requires user provenance")
+        intent, authority, source = (self.selection_intent, self.selection_authority,
+                                     self.destination_source)
+        if intent == 'EXPLICIT':
+            if authority != 'USER' or source != 'user':
+                raise ValueError('explicit destination requires USER authority and user source')
+        elif intent == 'USER_UNKNOWN':
+            if authority != 'USER' or source not in {None, 'user'}:
+                raise ValueError('USER_UNKNOWN retains USER authority without a system source')
+        elif intent == 'ANY_DESTINATION':
+            if (authority, source) not in {('USER', None), ('USER', 'user'),
+                                           ('SYSTEM', 'SYSTEM_DEFAULT')}:
+                raise ValueError('ANY_DESTINATION requires USER choice or SYSTEM_DEFAULT')
+        elif intent == 'DELEGATE_SELECTION':
+            if authority != 'AGENT' or source not in {None, 'AGENT_DELEGATED'}:
+                raise ValueError('delegated selection requires AGENT authority')
+        elif authority is not None or source is not None:
+            raise ValueError('UNSPECIFIED must not assign decision authority or source')
         return self
 
 
@@ -222,7 +239,7 @@ class TripRequest(Contract):
         }
         if self.destination.selection_mode == "explicit":
             required["destination.city"] = self.destination.city
-        elif self.destination.selection_intent in {'USER_UNKNOWN', 'UNKNOWN'}:
+        elif self.destination.selection_intent == 'USER_UNKNOWN':
             required['destination.city'] = self.destination.city
         unresolved = lambda value: value is None or (isinstance(value, str) and not value.strip())
         self.missing_fields = [path for path, value in required.items()
@@ -287,8 +304,8 @@ class DestinationResult(Contract):
     information_requests: list[InformationRequest] = Field(default_factory=list)
     recovery: DestinationRecovery | None = None
     selected_candidate_id: NonEmpty | None = None
-    selection_provenance: SelectionProvenance | None = None
-    selection_method: Literal['USER_EXPLICIT', 'USER_CHOICE', 'DELEGATED', 'ANY_DEFAULT'] | None = None
+    destination_source: DestinationSource = None
+    selection_method: Literal['USER_EXPLICIT', 'USER_CHOICE', 'AGENT_DELEGATED', 'SYSTEM_DEFAULT'] | None = None
 
     @model_validator(mode="after")
     def selection_consistent(self):
@@ -779,7 +796,7 @@ class PendingQuestion(Model):
     options: list[QuestionOption] = Field(default_factory=list)
     question_id: UUID | None = None
     episode_id: UUID | None = None
-    status: Literal["legacy", "open", "answered", "cancelled"] = "legacy"
+    status: Literal["legacy", "open", "answered", "cancelled", "superseded"] = "legacy"
     intent_snapshot: SelectionIntent = "UNSPECIFIED"
     round: PositiveInt | None = None
     constraint_proposal: ConstraintProposal | None = None
@@ -850,10 +867,11 @@ class AnswerHistory(Model):
             d = self.destination_update
             if self.kind != 'destination_choice' or self.answer_id is None or self.selected_option_id:
                 raise ValueError('destination update requires a canonical non-option choice response')
-            if not ((d.selection_intent == 'EXPLICIT' and d.selection_authority == 'user' and d.city and d.city.strip())
-                    or (d.selection_intent in {'ANY', 'ANY_DESTINATION', 'DELEGATE_SELECTION'}
-                        and d.selection_authority == 'delegated')
-                    or (d.selection_intent in {'USER_UNKNOWN', 'UNKNOWN'} and d.selection_authority == 'none')):
+            if not ((d.selection_intent == 'EXPLICIT' and d.selection_authority == 'USER' and d.city and d.city.strip())
+                    or (d.selection_intent in {'ANY_DESTINATION', 'USER_UNKNOWN'}
+                        and d.selection_authority == 'USER')
+                    or (d.selection_intent == 'DELEGATE_SELECTION'
+                        and d.selection_authority == 'AGENT')):
                 raise ValueError('destination update requires a parser-confirmed intent')
         return self
 
@@ -907,8 +925,8 @@ class DestinationEpisode(SelectionPolicy):
         """A permission gate, not an orchestration side effect."""
         self.consistent()
         self.authority_is_explicit()
-        if self.status == 'failed' or self.selection_intent not in {"ANY", "ANY_DESTINATION"} or self.selection_authority != "delegated" or self.final_resolve_status != "completed":
-            raise ValueError("default requires delegated ANY after final resolve")
+        if self.status == 'failed' or self.selection_intent != "ANY_DESTINATION" or self.final_resolve_status != "completed":
+            raise ValueError("default requires exhausted ANY_DESTINATION after final resolve")
         candidates = self.final_resolve_result.candidate_regions
         if self.final_resolve_result.selection_status not in {'selected', 'needs_user_choice'} or self.final_resolve_result.missing_fields:
             raise ValueError('final resolve remains unresolved')

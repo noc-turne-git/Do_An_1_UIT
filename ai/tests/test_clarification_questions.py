@@ -92,8 +92,8 @@ def test_identity_attaches_only_after_preparation():
     spec = choice_spec()
     draft = prepare_question(spec)
     issued = attach_identity(draft, question_id=uuid4(), episode_id=uuid4(),
-                             intent_snapshot='UNKNOWN', round=2)
+                             intent_snapshot='USER_UNKNOWN', round=2)
     assert issued.status == 'open' and issued.round == 2
     with pytest.raises(ValueError):
         attach_identity(issued, question_id=uuid4(), episode_id=uuid4(),
-                        intent_snapshot='UNKNOWN', round=2)
+                        intent_snapshot='USER_UNKNOWN', round=2)

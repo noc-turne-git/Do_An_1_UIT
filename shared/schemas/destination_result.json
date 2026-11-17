@@ -234,58 +234,6 @@
       ],
       "title": "Region",
       "type": "object"
-    },
-    "SelectionProvenance": {
-      "additionalProperties": false,
-      "properties": {
-        "source": {
-          "enum": [
-            "user",
-            "default",
-            "inferred"
-          ],
-          "title": "Source",
-          "type": "string"
-        },
-        "evidence": {
-          "minLength": 1,
-          "pattern": "\\S",
-          "title": "Evidence",
-          "type": "string"
-        },
-        "episode_id": {
-          "anyOf": [
-            {
-              "format": "uuid",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Episode Id"
-        },
-        "question_id": {
-          "anyOf": [
-            {
-              "format": "uuid",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Question Id"
-        }
-      },
-      "required": [
-        "source",
-        "evidence"
-      ],
-      "title": "SelectionProvenance",
-      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -376,16 +324,22 @@
       "default": null,
       "title": "Selected Candidate Id"
     },
-    "selection_provenance": {
+    "destination_source": {
       "anyOf": [
         {
-          "$ref": "#/$defs/SelectionProvenance"
+          "enum": [
+            "user",
+            "AGENT_DELEGATED",
+            "SYSTEM_DEFAULT"
+          ],
+          "type": "string"
         },
         {
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "title": "Destination Source"
     },
     "selection_method": {
       "anyOf": [
@@ -393,8 +347,8 @@
           "enum": [
             "USER_EXPLICIT",
             "USER_CHOICE",
-            "DELEGATED",
-            "ANY_DEFAULT"
+            "AGENT_DELEGATED",
+            "SYSTEM_DEFAULT"
           ],
           "type": "string"
         },

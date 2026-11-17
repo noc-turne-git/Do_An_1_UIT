@@ -11,7 +11,7 @@ def start(db, seed):
     user, trip, request = seed(db)
     with db.sessions.begin() as session:
         ep = ClarificationRepository(session, user).start_episode(request, SelectionPolicy(
-            selection_intent='ANY', selection_authority='delegated',
+            selection_intent='ANY_DESTINATION', selection_authority='USER',
             selection_provenance=dict(source='user', evidence='Choose anywhere')))
         persistence = WorkflowPersistence(session, user)
         run = GraphRun.model_validate(persistence.load(request).model_dump())

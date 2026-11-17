@@ -3,7 +3,7 @@ import json
 from copy import deepcopy
 
 from openai import (AsyncOpenAI, APIConnectionError, APITimeoutError,
-                    APIStatusError, AuthenticationError, RateLimitError)
+                    APIError, APIStatusError, AuthenticationError, RateLimitError)
 
 from ai.agents.llm import LLMResponse, ToolCall, TransientLLMError, ProviderError
 
@@ -16,8 +16,10 @@ def strict_schema(schema):
 
 
 class OpenAILLMAdapter:
-    def __init__(self, *, model, api_key=None, timeout=30, client=None, base_url=None):
+    def __init__(self, *, model, api_key=None, timeout=30, client=None, base_url=None,
+                 include_encrypted_reasoning=False):
         self.model = model
+        self.include_encrypted_reasoning = include_encrypted_reasoning
         self._owns_client = client is None
         source = client if client is not None else AsyncOpenAI(
             api_key=api_key, timeout=timeout, max_retries=0, base_url=base_url)
@@ -48,24 +50,37 @@ class OpenAILLMAdapter:
                 content = message.get('content', '')
                 items.append(dict(role=role, content=content if isinstance(content, str) else json.dumps(content)))
         try:
-            response = await self.client.responses.create(
+            payload = dict(
                 model=self.model, input=items, store=False,
-                include=['reasoning.encrypted_content'],
-                tools=[dict(type='function', name=t['name'], description=t['description'],
-                            parameters=strict_schema(t['input_schema']), strict=True) for t in request.tools],
                 text={'format': {'type': 'json_schema', 'name': 'agent_output',
                                  'schema': strict_schema(request.output_schema), 'strict': True}},
                 max_output_tokens=request.max_output_tokens)
-        except AuthenticationError:
-            raise ProviderError('LLM_AUTHENTICATION_ERROR') from None
+            # Empty tools and encrypted reasoning are optional Responses features.
+            # Omitting them improves compatibility with OpenAI-compatible gateways.
+            if request.tools:
+                payload['tools'] = [dict(type='function', name=t['name'], description=t['description'],
+                                         parameters=strict_schema(t['input_schema']), strict=True)
+                                    for t in request.tools]
+            if self.include_encrypted_reasoning:
+                payload['include'] = ['reasoning.encrypted_content']
+            response = await self.client.responses.create(**payload)
+        except AuthenticationError as exc:
+            raise ProviderError('LLM_AUTHENTICATION_ERROR', diagnostic=_diagnostic(exc)) from None
         except APITimeoutError:
             raise TimeoutError() from None
-        except (RateLimitError, APIConnectionError):
+        except (RateLimitError, APIConnectionError) as exc:
             raise TransientLLMError('Provider temporarily unavailable') from None
         except APIStatusError as exc:
+            diagnostic = _diagnostic(exc)
             if exc.status_code >= 500 or exc.status_code in (408, 409):
                 raise TransientLLMError('Provider temporarily unavailable') from None
-            raise ProviderError('LLM_REQUEST_ERROR') from None
+            raise ProviderError('LLM_REQUEST_ERROR', diagnostic=diagnostic) from None
+        except APIError as exc:
+            raise ProviderError('LLM_PROVIDER_ERROR', diagnostic=_diagnostic(exc)) from None
+        except (AttributeError, TypeError, ValueError) as exc:
+            # SDK/API-shape incompatibilities must not be collapsed into the
+            # harness's opaque LLM_EXECUTION_ERROR.
+            raise ProviderError('LLM_ADAPTER_ERROR', diagnostic=_diagnostic(exc)) from None
         if response.status != 'completed':
             raise ProviderError('LLM_INCOMPLETE_RESPONSE')
         output = [item.model_dump(mode='json', exclude_none=True) for item in response.output]
@@ -90,3 +105,15 @@ class OpenAILLMAdapter:
             return LLMResponse(kind='final', output=json.loads(''.join(texts)), token_usage=tokens)
         except (ValueError, KeyError, TypeError):
             raise ProviderError('INVALID_LLM_RESPONSE') from None
+
+
+def _diagnostic(exc):
+    """Metadata safe to log: no provider message, payload, headers, or credentials."""
+    result = {'exception_type': type(exc).__name__}
+    status = getattr(exc, 'status_code', None)
+    if isinstance(status, int):
+        result['status_code'] = status
+    request_id = getattr(exc, 'request_id', None)
+    if isinstance(request_id, str) and request_id:
+        result['request_id'] = request_id[:200]
+    return result

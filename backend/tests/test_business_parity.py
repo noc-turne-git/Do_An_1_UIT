@@ -51,7 +51,8 @@ def test_identical_fixtures_preserve_complete_business_payloads(scenario):
     if scenario in {'missing', 'resume', 'unknown'}:
         data['budget']['amount'] = None
     if scenario == 'destination':
-        data['destination'].update(selection_mode='ambiguous', city=None,
+        data['destination'].update(selection_intent='USER_UNKNOWN', selection_authority='USER',
+                                  destination_source=None, selection_mode='ambiguous', city=None,
                                   candidate_cities=['Da Lat', 'Nha Trang'])
     if scenario == 'replan':
         original = components.validator.validate
@@ -80,15 +81,15 @@ def test_identical_fixtures_preserve_complete_business_payloads(scenario):
     # Upgrade only the wire representation of the frozen legacy expectations.
     # Original business values remain frozen; safe contract defaults are explicit.
     expected = expected[scenario]
-    # The sample now carries explicit user authority; planning artifacts retain
-    # their frozen values, while selection gains auditable canonical provenance.
+    # The sample now carries the canonical decision authority and source;
+    # planning artifacts retain their frozen business values.
     expected['payloads']['trip_request_id']['destination'].update({
         key: data['destination'][key] for key in
-        ('selection_intent', 'selection_authority', 'selection_provenance')})
+        ('selection_intent', 'selection_authority', 'destination_source', 'selection_provenance')})
     destination_result = expected['payloads'].get('destination_result_id')
     if destination_result and destination_result['selection_status'] == 'selected':
         destination_result.update(selection_method='USER_EXPLICIT',
-            selection_provenance=data['destination']['selection_provenance'])
+            destination_source='user')
     for index, ref in enumerate(REFS):
         if ref in expected['payloads']:
             adapter = TypeAdapter(OUTPUTS[index])

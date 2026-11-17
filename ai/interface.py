@@ -6,6 +6,7 @@ from ai.orchestration.workflow_state import WorkflowRun
 from ai.logging import log_execution
 from shared.validation import validate_trip_request
 from ai.orchestration.clarification_policy import ClarificationPolicy
+from ai.orchestration.turns import ParsedTurn, TurnResult, StaleTurn
 
 
 def get_clarification_policy(settings) -> ClarificationPolicy:
@@ -39,3 +40,19 @@ async def parse_turn(settings, **kwargs):
     except Exception as exc:
         log_execution(run_id=run_id, step='request_parser', error=type(exc).__name__)
         raise
+
+
+async def run_turn(settings, *, graph=None, history=(), conversation_id=None,
+                   correlation_id=None, **kwargs):
+    """Shared chat/graph entry; extraction never issues questions or writes history."""
+    graph = graph or build_orchestrator(settings)
+    async def extract(previous, content, question, workflow):
+        try:
+            return await _parse_turn(settings, previous=previous, content=content,
+                history=list(history), request_id=correlation_id, conversation_id=conversation_id,
+                extraction_only=True,
+                pending_question=question.model_dump(mode='json') if question else None,
+                workflow_context=workflow.state.model_dump(mode='json') if workflow else None)
+        except Exception:
+            return ParsedTurn(None, error='PARSER_ERROR')
+    return await graph.run_turn(parser=extract, **kwargs)

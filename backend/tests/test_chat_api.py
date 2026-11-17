@@ -1,21 +1,25 @@
-from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from app.api.auth import get_current_user_id
 from app.core.config import Settings
-from app.db.models import MessageRecord, TripRecord, ConversationRecord
+from app.db.models import AnonymousSessionRecord, MessageRecord, TripRecord, ConversationRecord
 from app.db.session import get_session
 from app.main import create_app
 from shared.contracts import TripRequest
 from ai.orchestration.mock_workflow import fixture
+from ai.orchestration.request_parser import empty_request
+from ai.orchestration.turns import TurnResult
 from app.db.models import WorkflowRequestRecord, WorkflowArtifactRecord
 
 
 def setup_client():
     app = create_app(Settings(_env_file=None))
     session = MagicMock()
+    session.bind = None
+    session.get.return_value = None
     user = uuid4()
     app.dependency_overrides[get_current_user_id] = lambda: user
     app.dependency_overrides[get_session] = lambda: session
@@ -30,7 +34,8 @@ def setup_client():
 
 def test_send_creates_conversation_without_trip_and_stores_unicode_message(caplog):
     app, session, user = setup_client()
-    with TestClient(app) as client, caplog.at_level('INFO'):
+    turn = TurnResult(empty_request(), 'Mình có thể giúp gì?', planning=False)
+    with patch('app.api.chat.run_turn', return_value=turn), TestClient(app) as client, caplog.at_level('INFO'):
         response = client.post('/api/v1/chat/messages', json={'content': '  Đi Đà Lạt 3 ngày  '})
     assert response.status_code == 201, response.text
     data = response.json()
@@ -67,6 +72,25 @@ def test_rejects_invalid_messages_and_missing_auth():
     session.add.assert_not_called()
 
 
+def test_guest_session_owns_persisted_chat_without_a_bearer_token():
+    app, session, _ = setup_client()
+    app.dependency_overrides.pop(get_current_user_id)
+    guest_id = uuid4()
+    session.get.side_effect = lambda model, key: (
+        AnonymousSessionRecord(anonymous_session_id=guest_id,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1))
+        if model is AnonymousSessionRecord else None)
+    turn = TurnResult(empty_request(), 'Welcome!', planning=False)
+    with patch('app.api.chat.run_turn', return_value=turn), TestClient(app) as client:
+        response = client.post('/api/v1/chat/messages', headers={
+            'X-Anonymous-Session-ID': str(guest_id)}, json={'content': 'Hello'})
+    assert response.status_code == 201, response.text
+    conversation = next(call.args[0] for call in session.add.call_args_list
+                        if isinstance(call.args[0], ConversationRecord))
+    assert conversation.user_id is None
+    assert conversation.anonymous_session_id == guest_id
+
+
 def test_history_is_chronological():
     app, session, user = setup_client()
     trip = uuid4()
@@ -83,7 +107,8 @@ def test_history_is_chronological():
 
 def test_multiple_turns_do_not_create_trip():
     app, session, user = setup_client()
-    with TestClient(app) as client:
+    turn = TurnResult(empty_request(), 'Mình có thể giúp gì?', planning=False)
+    with patch('app.api.chat.run_turn', return_value=turn), TestClient(app) as client:
         first = client.post('/api/v1/chat/messages', json={'content': 'I want to travel'}).json()
         conversation = session.add.call_args_list[0].args[0]
         session.scalar.return_value = conversation

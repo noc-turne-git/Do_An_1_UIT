@@ -205,3 +205,13 @@ def test_logging_contains_only_execution_labels(caplog):
     assert record.request_id == 'r'
     assert record.agent_name == 'test'
     assert record.error_code == 'LLM_EXECUTION_ERROR'
+
+def test_provider_diagnostic_keeps_type_but_not_message(caplog):
+    import logging
+    from ai.agents.llm import ProviderError
+    with caplog.at_level(logging.WARNING, logger='ai.agents.runtime.harness'):
+        result,_ = run_script([ProviderError('LLM_REQUEST_ERROR', diagnostic={
+            'exception_type': 'BadRequestError', 'status_code': 400})])
+    assert result.error.code == 'LLM_REQUEST_ERROR'
+    record = [r for r in caplog.records if r.message == 'agent_runtime.provider_error'][-1]
+    assert record.provider_diagnostic == {'exception_type': 'BadRequestError', 'status_code': 400}
