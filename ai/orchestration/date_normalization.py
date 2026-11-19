@@ -117,7 +117,12 @@ def normalize_trip_dates(previous: TripRequest, updates: Mapping[str, object], *
         if parsed is None:
             issues.append(DateIssue('ambiguous', (path,), 'Date is ambiguous, invalid or in the past'))
             blocked.add(path)
-        elif current_date is not None and parsed < current_date:
+        elif current_date is not None and parsed < current_date and not (
+                # An established itinerary can be corrected after its travel
+                # dates have passed.  Keep that explicit user correction so
+                # its range can be re-normalized; ordering/conflict checks
+                # below still reject an invalid range.
+                old.start_date is not None or old.end_date is not None):
             other = start if path == 'trip.end_date' else end
             if other is not None and ((path == 'trip.end_date' and parsed < other)
                                       or (path == 'trip.start_date' and parsed > other)):

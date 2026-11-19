@@ -553,8 +553,14 @@ class LangGraphOrchestrator:
             draft = self._draft_for_fields(asked_fields, (source,) if source else ())
             r.trip_request_fields = list(dict.fromkeys([*r.trip_request_fields, *asked_fields]))
             StateMachine(r, self.persistence).clarify(asked_fields, request=value, draft=draft)
-        elif (step == 'request_parser' and value.destination.selection_mode == 'explicit'
-              and 'destination.city' in value.missing_fields):
+        elif (step == 'request_parser' and 'destination.city' in value.missing_fields
+              and (value.destination.selection_intent == 'EXPLICIT'
+                   or (value.destination.selection_intent == 'USER_UNKNOWN'
+                       and not value.destination.candidate_cities))):
+            # ``USER_UNKNOWN`` is deliberately not delegation.  Ask the
+            # destination owner for a city when there are no canonical
+            # candidates.  If candidates exist, the resolver issues the
+            # established user-owned choice instead.
             self._ask_destination(r, QuestionSpec('destination_info', ('destination.city',)), value)
         elif step == "destination_agent":
             # _destination_selection may have persisted the selected option or

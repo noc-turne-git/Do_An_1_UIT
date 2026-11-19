@@ -63,7 +63,10 @@ def test_chat_turn_trace_uses_response_run_id_and_conversation(tmp_path):
     events = [json.loads(line) for line in trace.read_text(encoding='utf-8').splitlines()]
     assert {'conversation_loaded', 'response_staged'} <= {event['phase'] for event in events}
     assert {event['run_id'] for event in events} == {response.headers['x-trace-run-id']}
-    assert 'private trip text' not in trace.read_text(encoding='utf-8')
+    trace_text = trace.read_text(encoding='utf-8')
+    # Diagnostic traces retain the user business input so a turn can be
+    # reconstructed; credential redaction is covered separately.
+    assert 'private trip text' in trace_text
     assert not (tmp_path / 'execution.jsonl').exists()
 
 

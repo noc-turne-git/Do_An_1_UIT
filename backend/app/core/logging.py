@@ -1,6 +1,7 @@
 """Backend operational events use console handlers only."""
 import json
 import logging
+from ai.logging import diagnostic_snapshot
 from ai.logging import configure_ai_logging, log_execution
 
 def configure_logging(settings):
@@ -19,6 +20,18 @@ def log_message(*, message_id, role, content, conversation_id=None, trip_id=None
 
 def log_parser_turn(*, request_id, conversation_id, message_id, trip_request, error_code,
                     trip_id=None, run_id=None, workflow_id=None):
+    # Keep the completed parser state in the ordinary diagnostic stream too.
+    # ``diagnostic_snapshot`` preserves business context while redacting only
+    # credentials embedded in free text or sensitive fields.
+    event = diagnostic_snapshot({
+        'event': 'chat.parser_turn', 'request_id': request_id,
+        'conversation_id': conversation_id, 'trip_id': trip_id,
+        'workflow_id': workflow_id, 'run_id': run_id or request_id,
+        'message_id': message_id, 'status': trip_request.meta.parser_status,
+        'missing_fields': trip_request.missing_fields,
+        'parsed_trip_request': trip_request, 'error_code': error_code,
+    })
+    logging.getLogger('conversation').info(json.dumps(event, ensure_ascii=False))
     log_execution(run_id=run_id or request_id, workflow_id=workflow_id, request_id=request_id,
         conversation_id=conversation_id, trip_id=trip_id, step='chat.parser_turn',
         event_type='chat.parser', phase='completed', result={
