@@ -7,7 +7,7 @@ import pytest
 
 from ai.orchestration.graph_workflow import GraphRun
 from ai.orchestration.turns import ParsedTurn, StaleTurn
-from ai.orchestration.request_parser import apply_changes, ParserOutput, Change
+from ai.orchestration.request_parser import apply_changes, ParserOutput, Change, empty_request
 from shared.contracts import DestinationEpisode, DestinationResult, SelectionPolicy, TripRequest
 from test_destination_resolution import Store, answer, request, result
 from test_graph_workflow import workflow
@@ -70,6 +70,25 @@ def test_stale_reference_rejected_before_parser_even_for_explicit_new_input():
         with pytest.raises(StaleTurn):
             turn(graph, previous=first, content='New explicit destination', parser=parser, **changes)
     parser.assert_not_called()
+
+
+def test_text_turn_issues_llm_question_wording_with_canonical_fields():
+    graph, _, _ = setup_turn()
+    parsed = empty_request()
+    parser = AsyncMock(return_value=ParsedTurn(parsed, 'summary', question_drafts=[
+        {'fields': ['destination.city', 'destination.selection_mode'],
+         'question': 'Bạn muốn tự chọn thành phố hay để mình chọn giúp?'},
+        {'fields': ['trip.start_date', 'trip.end_date', 'trip.duration_days'],
+         'question': 'Bạn dự định đi vào ngày nào, ngày về nào hoặc trong bao nhiêu ngày?'},
+        {'fields': ['travelers.adults', 'travelers.children', 'budget.amount', 'budget.scope'],
+         'question': 'Chuyến đi có bao nhiêu người và ngân sách dự kiến là bao nhiêu?'},
+    ]))
+
+    result = turn(graph, content='Plan a trip', parser=parser)
+
+    assert result.reply == 'Bạn dự định đi vào ngày nào, ngày về nào hoặc trong bao nhiêu ngày?'
+    assert result.run.pending_questions[0].question == result.reply
+    assert result.run.pending_questions[0].fields == ['trip.start_date', 'trip.end_date']
 
 
 def test_intent_change_supersedes_question_without_resetting_budget():

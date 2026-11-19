@@ -148,6 +148,27 @@ def apply_changes(previous, output, *, current_date=None):
     return request
 
 
+def applicable_followups(request, followups):
+    """Keep at most three LLM questions relevant to still-missing fields.
+
+    A model can include a compatible companion field (for example
+    ``trip.duration_days`` alongside start/end dates).  The workflow narrows
+    the field snapshot later; rejecting that wording here would discard a
+    perfectly usable question.
+    """
+    questions, covered = [], set()
+    for followup in followups:
+        relevant_fields = set(followup.fields).intersection(request.missing_fields)
+        if (relevant_fields and not covered.intersection(relevant_fields)
+                and not all(request.meta.field_decisions.get(path) == 'DEFERRED'
+                            and path in DELEGABLE for path in relevant_fields)):
+            questions.append(followup)
+            covered.update(relevant_fields)
+            if len(questions) == 3:
+                break
+    return questions
+
+
 async def parse_turn(settings, *, previous, content, history, request_id, conversation_id,
                      extraction_only=False, pending_question=None, workflow_context=None):
     from ai.orchestration.turns import ParsedTurn
@@ -199,20 +220,16 @@ async def parse_turn(settings, *, previous, content, history, request_id, conver
             return result_value(None, None, 'INVALID_PARSER_CHANGE')
         if extraction_only:
             request.meta.raw_prompt = content
-            return ParsedTurn(request, result.output.summary)
-        questions = []
-        covered = set()
-        for followup in result.output.questions:
-            if (set(followup.fields) <= set(request.missing_fields)
-                and not covered.intersection(followup.fields)
-                and not any(request.meta.field_decisions.get(path) == 'DEFERRED'
-                            and path in DELEGABLE for path in followup.fields)):
-                questions.append(followup.question)
-                covered.update(followup.fields)
-                if len(questions) == 3:
-                    break
+            return ParsedTurn(request, result.output.summary,
+                              question_drafts=[question.model_dump() for question in
+                                               applicable_followups(request, result.output.questions)])
+        # Ask one actionable question per turn.  Remaining LLM questions are
+        # alternatives, not text to concatenate into the reply.
+        followups = applicable_followups(request, result.output.questions)
+        questions = [followups[0].question] if followups else []
+        covered = set(followups[0].fields) if followups else set()
         for path in request.missing_fields:
-            if len(questions) == 3:
+            if questions:
                 break
             if path in covered:
                 continue
@@ -221,13 +238,11 @@ async def parse_turn(settings, *, previous, content, history, request_id, conver
             if decision == 'DEFERRED' and path in DELEGABLE:
                 continue
             questions.append(prefix + LABELS[path])
-            if len(questions) == 3:
-                break
         if request.missing_fields and not questions:
             questions.append('Các thông tin để sau vẫn chưa chốt. Khi sẵn sàng, bạn có thể bổ sung hoặc cho phép AI quyết định nhé.')
         # Only ask for missing requirements; the API sends a separate full
         # trip summary once the collected request is ready.
-        reply = '\n\n'.join(questions) if request.missing_fields else result.output.summary
+        reply = questions[0] if request.missing_fields else result.output.summary
         return request, reply, None
     finally:
         close = getattr(harness.llm, 'aclose', None)

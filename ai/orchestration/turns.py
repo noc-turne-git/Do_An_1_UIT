@@ -16,6 +16,8 @@ class ParsedTurn:
     reply: str | None = None
     error: str | None = None
     planning: bool = True
+    # Parser-supplied wording proposals; workflow retains field and budget control.
+    question_drafts: list[dict] | None = None
 
 
 @dataclass

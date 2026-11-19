@@ -82,7 +82,7 @@ class StateMachine:
                     pending_questions=[question])
         return question
 
-    def clarify(self, fields, *, request=None):
+    def clarify(self, fields, *, request=None, draft=None):
         from ai.orchestration.clarification_questions import QuestionSpec
 
         fields = tuple(dict.fromkeys(fields))
@@ -90,6 +90,6 @@ class StateMachine:
             self.fail(self.run.state.current_step, 'missing_required_fields',
                       'No configured default for: ' + ', '.join(fields))
             return
-        return self.issue_question(QuestionSpec('trip_request', fields), request=request)
+        return self.issue_question(QuestionSpec('trip_request', fields), request=request, draft=draft)
 
 

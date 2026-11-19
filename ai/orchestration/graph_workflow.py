@@ -94,6 +94,7 @@ class GraphState(TypedDict):
     previous_request: TripRequest | None
     answer: AnswerHistory | None
     parsed_input: bool
+    question_drafts: list[dict]
 
 
 class LangGraphOrchestrator:
@@ -288,7 +289,8 @@ class LangGraphOrchestrator:
                 if step == 'destination_agent':
                     value = self._destination_selection(r, value)
                 self._save(r, step, value)
-                self._outcome(r, step, value)
+                self._outcome(r, step, value,
+                              question_drafts=state.get('question_drafts', ()) if step == 'request_parser' else ())
                 event["refs_after"] = r.state.artifacts.model_dump(mode="json")
             except InvalidAnswer as exc:
                 # No accepted answer, no counter/default/final-resolve transition.
@@ -526,15 +528,31 @@ class LangGraphOrchestrator:
                     reject('Constraint proposal does not match the current request')
         StateMachine(r, self.persistence).issue_question(spec, request=request)
 
-    def _outcome(self, r, step, value):
+    @staticmethod
+    def _draft_for_fields(fields, question_drafts):
+        """Return LLM wording while keeping the issued field snapshot canonical."""
+        field_set = set(fields)
+        source = next((item for item in question_drafts
+                       if item.get('question') and field_set.intersection(item.get('fields', ()))), None)
+        if source is None:
+            return None
+        return {'fields': list(fields), 'question': source['question']}
+
+    def _outcome(self, r, step, value, *, question_drafts=()):
         sm, o = StateMachine(r), r.outputs
         if step == "request_parser" and any(
                 not field.startswith('destination.') and field not in r.destination_info_fields
                 for field in value.missing_fields):
             fields = [field for field in value.missing_fields
                       if not field.startswith('destination.') and field not in r.destination_info_fields]
-            r.trip_request_fields = list(dict.fromkeys([*r.trip_request_fields, *fields]))
-            StateMachine(r, self.persistence).clarify(fields, request=value)
+            # Only one question can be actionable at a time. Select the first
+            # valid wording from the parser's (up to three) suggestions.
+            source = next((item for item in question_drafts
+                           if set(item.get('fields', ())).intersection(fields)), None)
+            asked_fields = [field for field in fields if source and field in source['fields']] or fields
+            draft = self._draft_for_fields(asked_fields, (source,) if source else ())
+            r.trip_request_fields = list(dict.fromkeys([*r.trip_request_fields, *asked_fields]))
+            StateMachine(r, self.persistence).clarify(asked_fields, request=value, draft=draft)
         elif (step == 'request_parser' and value.destination.selection_mode == 'explicit'
               and 'destination.city' in value.missing_fields):
             self._ask_destination(r, QuestionSpec('destination_info', ('destination.city',)), value)
@@ -670,7 +688,7 @@ class LangGraphOrchestrator:
                     result={'parsed_request': parsed.request or old or base,
                             'planning': parsed.planning, 'status': 'not_scheduled'},
                     error=parsed.error)
-                return TurnResult(old or base, parsed.reply, parsed.error, parsed.planning, previous)
+                return TurnResult(old or base, parsed.reply, parsed.error, parsed.planning, run=previous)
             request, reply = parsed.request, parsed.reply
             answer_raw = content
         if request is None:
@@ -719,7 +737,8 @@ class LangGraphOrchestrator:
                 selected_option_id=raw.strip())
         run = await self._execute(request, current_date=current_date, previous=previous,
             answer_raw=answer_raw, answer=answer, trip_id=trip_id, request_id=request_id,
-            parsed_input=content is not None, canonical=not legacy)
+            parsed_input=content is not None, canonical=not legacy,
+            question_drafts=parsed.question_drafts if content is not None else ())
         value = run.outputs.get('request_parser', request)
         if run.pending_questions:
             reply = '\n\n'.join(q.question for q in run.pending_questions)
@@ -735,7 +754,8 @@ class LangGraphOrchestrator:
 
     async def _execute(self, request: TripRequest, *, current_date: date, previous: GraphRun | None = None,
                   answer_raw: str | None = None, answer: AnswerHistory | None = None,
-                  trip_id=None, request_id=None, parsed_input=False, canonical=False):
+                  trip_id=None, request_id=None, parsed_input=False, canonical=False,
+                  question_drafts=()):
         validate_trip_request(request.model_dump(mode='json'))
         if answer is not None:
             answer = AnswerHistory.model_validate(answer.model_dump())
@@ -819,7 +839,7 @@ class LangGraphOrchestrator:
         try:
             state = await self.graph.ainvoke(dict(run=r, request=request.model_copy(deep=True),
                 current_date=current_date, answer_raw=answer_raw, answer=answer, previous_request=deepcopy(old),
-                parsed_input=parsed_input),
+                parsed_input=parsed_input, question_drafts=list(question_drafts or ())),
                 config={"recursion_limit": self.limits.max_transitions + 3})
         except NodeCancelledError as exc:
             # LangGraph must treat node-raised cancellation as a failure internally.
