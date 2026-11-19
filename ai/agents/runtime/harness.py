@@ -1,7 +1,7 @@
 """One agent's bounded conversation. LangGraph alone coordinates agents."""
 import asyncio
 import logging
-from ai.logging import log_execution
+from ai.logging import log_execution, traced, trace_span, diagnostic_snapshot
 from ai.agents.runtime.context import execution_identity
 from copy import deepcopy
 from time import monotonic
@@ -22,6 +22,9 @@ class AgentHarness:
         self.executor = ToolExecutor(self.tools)
         self.skills = skills
 
+    @traced('agent', metadata=lambda self, definition, context, **kwargs: {
+        'agent': definition.name, 'execution_mode': 'mock' if isinstance(self.llm, MockLLMAdapter) else 'real',
+        'adapter': type(self.llm).__name__, 'model': getattr(self.llm, 'model', None)})
     async def run(self, definition: AgentDefinition, context: AgentContext, *, skills=()):
         events = []
         usage = {}
@@ -51,7 +54,7 @@ class AgentHarness:
                 return
             logger.warning('agent_runtime.provider_error', extra={
                 'request_id': context.request_id, 'agent_name': definition.name,
-                'error_code': code, 'provider_diagnostic': diagnostic})
+                'error_code': code, 'provider_diagnostic': diagnostic_snapshot(diagnostic)})
             identity = execution_identity.get() or {}
             log_execution(run_id=context.request_id, trip_id=identity.get('trip_id'),
                 step='agent_runtime.provider_error', result=diagnostic, error=code)
@@ -98,16 +101,19 @@ class AgentHarness:
                         step='agent_runtime.llm', event_type='llm.request', phase='prepared', result={
                             'agent': definition.name, 'agent_step': step,
                             'request': request.model_dump(mode='json'),
-                            'system_prompt': definition.system_prompt,
                             'active_skills': [skill.model_dump(mode='json') for skill in instructions]})
                     while True:
                         tick = monotonic()
+                        log_execution(step='agent_runtime.llm', event_type='llm.attempt', phase='started',
+                            result={'agent': definition.name, 'model': getattr(self.llm, 'model', None),
+                                    'adapter': type(self.llm).__name__, 'retry': retries, 'agent_step': step})
                         try:
                             async with asyncio.timeout(definition.limits.llm_timeout):
                                 response = LLMResponse.model_validate(await self.llm.respond(request.model_copy(deep=True)))
                             event('llm_response', duration=monotonic()-tick)
                             log_execution(run_id=context.request_id, trip_id=(execution_identity.get() or {}).get('trip_id'),
                                 step='agent_runtime.llm', event_type='llm.response', phase='received', result={
+                                    'duration_ms': round((monotonic()-tick)*1000, 3), 'retry': retries,
                                     'agent': definition.name, 'agent_step': step, 'kind': response.kind,
                                     'token_usage': response.token_usage,
                                     'tool_calls': [call.model_dump(mode='json') for call in response.tool_calls],
@@ -183,25 +189,27 @@ class AgentHarness:
                             event('tool_replayed', tool_name=call.name)
                         else:
                             calls += 1
-                            log_execution(run_id=context.request_id,
-                                trip_id=(execution_identity.get() or {}).get('trip_id'),
-                                step='agent_runtime.tool', event_type='agent.tool', phase='called',
-                                result={'agent': definition.name, 'agent_step': step,
-                                        'tool_name': call.name, 'call_id': call.id,
-                                        'arguments': call.arguments})
-                            result = await self.executor.execute(call.name, call.arguments,
-                                allowed_tools=definition.allowed_tools, call_id=call.id,
-                                timeout=definition.limits.tool_timeout)
+                            with trace_span('tool.' + call.name) as tool_span:
+                                log_execution(run_id=context.request_id,
+                                    trip_id=(execution_identity.get() or {}).get('trip_id'),
+                                    step='agent_runtime.tool', event_type='agent.tool', phase='called',
+                                    result={'agent': definition.name, 'agent_step': step,
+                                            'tool_name': call.name, 'call_id': call.id,
+                                            'arguments': call.arguments})
+                                result = await self.executor.execute(call.name, call.arguments,
+                                    allowed_tools=definition.allowed_tools, call_id=call.id,
+                                    timeout=definition.limits.tool_timeout)
+                                tool_span['status'] = 'failed' if result.error else 'completed'
+                                log_execution(run_id=context.request_id,
+                                    trip_id=(execution_identity.get() or {}).get('trip_id'),
+                                    step='agent_runtime.tool', event_type='agent.tool', phase='returned',
+                                    result={'agent': definition.name, 'agent_step': step,
+                                            'tool_name': call.name, 'call_id': call.id, 'arguments': call.arguments,
+                                            'output': result.output, 'duration_ms': round(result.duration * 1000, 3)},
+                                    error=result.error.code if result.error else None)
                             executed[call.id] = (call.model_copy(deep=True), result)
                             event('tool_result', tool_name=call.name, duration=result.duration,
                                   error_code=result.error.code if result.error else None)
-                            log_execution(run_id=context.request_id,
-                                trip_id=(execution_identity.get() or {}).get('trip_id'),
-                                step='agent_runtime.tool', event_type='agent.tool', phase='returned',
-                                result={'agent': definition.name, 'agent_step': step,
-                                        'tool_name': call.name, 'call_id': call.id,
-                                        'output': result.output, 'duration_ms': round(result.duration * 1000, 3)},
-                                error=result.error.code if result.error else None)
                         if len(result.model_dump_json().encode()) > definition.limits.max_output_bytes:
                             return failure('MAX_OUTPUT_BYTES')
                         messages.append(dict(role='tool', **result.model_dump(mode='json')))

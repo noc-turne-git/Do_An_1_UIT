@@ -29,6 +29,12 @@ LABELS = {
 DELEGABLE = {'destination.selection_mode', 'destination.city', 'trip.start_date', 'trip.end_date',
              'budget.amount', 'budget.scope', 'preferences.interests', 'preferences.pace',
              'preferences.transport_modes'}
+DESTINATION_SELECTION_PATHS = frozenset({'destination.selection_mode', 'destination.city'})
+NON_NULL_COLLECTION_FIELDS = frozenset({
+    'destination.candidate_cities', 'destination.preferred_areas', 'destination.must_visit',
+    'destination.avoid_places', 'travelers.children_ages', 'budget.includes', 'budget.excludes',
+    'daily_preferences', 'must_do', 'additional_constraints',
+})
 
 
 def empty_request():
@@ -88,11 +94,21 @@ def apply_changes(previous, output, *, current_date=None):
         value = json.loads(change.value_json)
         if change.decision != 'SPECIFIED' and value is not None:
             raise ValueError('Undecided fields cannot contain invented values')
+        # Deferring a destination-selection answer is intentionally a no-op for
+        # the current selection state.  In particular, do not erase an existing
+        # selection_mode merely because the user wants to settle it later.
+        preserve_destination_selection = (
+            change.path in DESTINATION_SELECTION_PATHS and change.decision == 'DEFERRED'
+        )
         if change.path in DATE_PATHS:
             date_updates[change.path] = value
-        else:
+        # Some collection-valued schema fields (for example preferred_areas)
+        # are not nullable, so retain their current list while recording a
+        # non-specific decision in metadata.
+        elif not preserve_destination_selection and not (
+                change.path in NON_NULL_COLLECTION_FIELDS and change.decision != 'SPECIFIED' and value is None):
             node[parts[-1]] = value
-        if change.path.startswith('destination.'):
+        if change.path in DESTINATION_SELECTION_PATHS:
             destination_changes[change.path] = (change.decision, value)
         payload['meta']['field_decisions'][change.path] = change.decision
         payload['meta']['field_sources'][change.path] = 'user'
@@ -118,6 +134,7 @@ def apply_changes(previous, output, *, current_date=None):
         decisions = {entry[0] for entry in destination_changes.values()}
         decision = ('AI_DECIDE' if 'AI_DECIDE' in decisions else
                     'FLEXIBLE' if 'FLEXIBLE' in decisions else
+                    'NO_PREFERENCE' if 'NO_PREFERENCE' in decisions else
                     'UNKNOWN' if 'UNKNOWN' in decisions else None)
         if city and city[0] == 'SPECIFIED' and isinstance(city[1], str) and city[1].strip():
             payload['destination'].update(selection_intent='EXPLICIT',
@@ -125,16 +142,21 @@ def apply_changes(previous, output, *, current_date=None):
                 selection_provenance=dict(source='user', evidence='destination.city=' + city[1]))
             payload['meta']['field_sources']['destination.selection_mode'] = 'user'
             payload['meta']['field_decisions']['destination.selection_mode'] = 'SPECIFIED'
-        elif decision in {'UNKNOWN', 'FLEXIBLE', 'AI_DECIDE'}:
+        elif decision in {'UNKNOWN', 'FLEXIBLE', 'NO_PREFERENCE', 'AI_DECIDE'}:
             intent = {'UNKNOWN': 'USER_UNKNOWN', 'FLEXIBLE': 'ANY_DESTINATION',
-                      'AI_DECIDE': 'DELEGATE_SELECTION'}[decision]
-            authority = {'UNKNOWN': 'USER', 'FLEXIBLE': 'USER', 'AI_DECIDE': 'AGENT'}[decision]
+                      'NO_PREFERENCE': 'ANY_DESTINATION', 'AI_DECIDE': 'DELEGATE_SELECTION'}[decision]
+            authority = {'UNKNOWN': 'USER', 'FLEXIBLE': 'USER',
+                         'NO_PREFERENCE': 'USER', 'AI_DECIDE': 'AGENT'}[decision]
             payload['destination'].update(selection_intent=intent,
                 selection_authority=authority, destination_source=None,
                 selection_mode='implicit' if decision != 'UNKNOWN' else 'ambiguous',
                 selection_provenance=dict(source='user', evidence='destination:' + decision), city=None)
             payload['meta']['field_sources']['destination.selection_mode'] = 'user'
             payload['meta']['field_decisions']['destination.selection_mode'] = decision
+        elif 'DEFERRED' in decisions:
+            # The metadata records that clarification was deferred, while the
+            # policy remains exactly as it was before this turn.
+            pass
         elif city and city[1] is None:
             payload['destination'].update(selection_intent='UNSPECIFIED',
                 selection_authority=None, destination_source=None, selection_provenance=None)

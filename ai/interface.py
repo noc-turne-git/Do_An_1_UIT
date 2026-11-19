@@ -4,7 +4,7 @@ from ai.orchestration.mock_workflow import fixture, mock_components
 from ai.orchestration.request_parser import empty_request, parse_turn as _parse_turn
 from ai.orchestration.workflow_state import WorkflowRun
 from uuid import uuid4
-from ai.logging import current_diagnostic_identity, diagnostic_scope, log_execution
+from ai.logging import current_diagnostic_identity, diagnostic_scope, log_execution, traced
 from shared.validation import validate_trip_request
 from ai.orchestration.clarification_policy import ClarificationPolicy
 from ai.orchestration.turns import ParsedTurn, TurnResult, StaleTurn
@@ -49,6 +49,7 @@ async def run_turn(settings, *, graph=None, history=(), conversation_id=None,
                    correlation_id=None, **kwargs):
     """Shared chat/graph entry; extraction never issues questions or writes history."""
     graph = graph or build_orchestrator(settings)
+    @traced('parser')
     async def extract(previous, content, question, workflow):
         try:
             return await _parse_turn(settings, previous=previous, content=content,

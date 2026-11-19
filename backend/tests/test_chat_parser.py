@@ -80,14 +80,23 @@ def test_legacy_mode_does_not_grant_selection_and_intent_change_keeps_data():
     assert changed.destination.selection_authority == 'USER'
 
 
-def test_non_destination_unknown_and_never_default_regression():
-    for path in ['budget.amount', 'preferences.pace', 'travelers.children']:
-        assert path not in apply_changes(complete(), output(path, None, 'UNKNOWN')).missing_fields
-    for path in ['trip.start_date', 'trip.end_date', 'travelers.adults']:
+def test_unknown_requires_followup_for_every_non_destination_field():
+    for path in ['trip.start_date', 'trip.end_date', 'travelers.adults',
+                 'travelers.children', 'preferences.interests', 'preferences.pace',
+                 'preferences.transport_modes', 'budget.amount', 'budget.scope']:
         assert path in apply_changes(complete(), output(path, None, 'UNKNOWN')).missing_fields
 
 
-@pytest.mark.parametrize('decision,missing', [('UNKNOWN', False), ('DEFERRED', True),
+@pytest.mark.parametrize('decision', ['DEFERRED', 'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE'])
+def test_confirmed_no_value_closes_collection_for_all_non_destination_fields(decision):
+    for path in ['trip.start_date', 'trip.end_date', 'travelers.adults',
+                 'travelers.children', 'preferences.interests', 'preferences.pace',
+                 'preferences.transport_modes', 'budget.amount', 'budget.scope']:
+        request = apply_changes(complete(), output(path, None, decision))
+        assert path not in request.missing_fields
+
+
+@pytest.mark.parametrize('decision,missing', [('UNKNOWN', True), ('DEFERRED', False),
     ('FLEXIBLE', False), ('AI_DECIDE', False), ('NO_PREFERENCE', False)])
 def test_decision_roundtrip_and_essential_travelers(decision, missing):
     request = apply_changes(complete(), output('preferences.pace', None, decision))
@@ -95,8 +104,8 @@ def test_decision_roundtrip_and_essential_travelers(decision, missing):
     assert ('preferences.pace' in restored.missing_fields) == missing
     assert request.preferences.pace is None
     essential = apply_changes(complete(), output('travelers.adults', None, decision))
-    assert 'travelers.adults' in essential.missing_fields
-    assert essential.meta.parser_status == 'clarifying'
+    assert ('travelers.adults' in essential.missing_fields) == missing
+    assert essential.meta.parser_status == ('clarifying' if missing else 'ready')
 
 
 def test_invalid_json_dates_zero_travelers_and_protected_paths():
@@ -159,7 +168,7 @@ def test_relative_date_result_and_grouped_questions():
     assert not error and request.trip.start_date == tomorrow and request.trip.duration_days == 3
     assert reply.count('bao nhiêu') == 1
     assert 'người lớn' in reply
-    assert 'travelers.children' not in request.missing_fields
+    assert 'travelers.children' in request.missing_fields
 
 
 def test_harness_keeps_new_explicit_end_date_and_recomputes_duration():

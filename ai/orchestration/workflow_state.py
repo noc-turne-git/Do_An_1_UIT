@@ -3,6 +3,8 @@
 This module defines data and state operations; scheduling belongs to LangGraph.
 """
 from uuid import UUID
+import sys
+from ai.logging import state_snapshot, log_state_update
 
 from pydantic import Field
 
@@ -41,6 +43,11 @@ class StateMachine:
         self.persistence = persistence
 
     def update(self, **changes):
+        before = state_snapshot(self.run)
+        if before is not None:
+            caller = sys._getframe(1)
+            source = f'{caller.f_globals.get("__name__")}.{caller.f_code.co_name}:{caller.f_lineno}'
+            del caller
         for field in ("pending_questions", "answers_history", "attempts", "errors"):
             if field in changes:
                 from pydantic import TypeAdapter
@@ -49,6 +56,8 @@ class StateMachine:
         data.update(changes)
         self.run.state = WorkflowState.model_validate(data)
         self.run.checkpoints.append(self.run.state.model_copy(deep=True))
+        if before is not None:
+            log_state_update(self.run, before, source=source)
         if self.persistence:
             self.persistence.sync(self.run)
 

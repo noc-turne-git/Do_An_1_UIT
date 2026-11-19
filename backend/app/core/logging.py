@@ -1,10 +1,51 @@
 """Backend operational events use console handlers only."""
 import json
 import logging
+import asyncio
+from uuid import uuid4
 from ai.logging import diagnostic_snapshot
-from ai.logging import configure_ai_logging, log_execution
+from ai.logging import (configure_ai_logging, log_execution, diagnostic_scope,
+                        runtime_trace, runtime_request_allowed, trace_span, testing_process)
+
+
+class RuntimeTraceMiddleware:
+    """Pure ASGI boundary includes response delivery and dependency cleanup."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if (scope['type'] != 'http' or scope.get('method') != 'POST'
+                or scope.get('path') != '/api/v1/chat/messages'):
+            return await self.app(scope, receive, send)
+        state = scope.setdefault('state', {})
+        status = None
+
+        async def traced_send(message):
+            nonlocal status
+            if message['type'] == 'http.response.start':
+                status = message['status']
+            await send(message)
+
+        with runtime_trace(enabled=runtime_request_allowed(scope)):
+            with diagnostic_scope(run_id=state.get('diagnostic_run_id') or uuid4(),
+                                  request_id=state.get('request_id')):
+                with trace_span('user_turn'):
+                    log_execution(step='http.turn', event_type='http.turn', phase='started',
+                                  input={'method': scope['method'], 'path': scope['path']})
+                    try:
+                        await self.app(scope, receive, traced_send)
+                    except BaseException as exc:
+                        log_execution(step='http.turn', event_type='http.turn',
+                            phase='cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed',
+                            result={'http_status': status}, error=exc)
+                        raise
+                    else:
+                        log_execution(step='http.turn', event_type='http.turn', phase='completed',
+                                      result={'http_status': status})
 
 def configure_logging(settings):
+    if testing_process():
+        return
     logging.basicConfig(level=settings.log_level,
         format='%(asctime)s %(levelname)s %(name)s %(message)s')
     logging.getLogger('app').setLevel(settings.log_level)

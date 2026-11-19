@@ -14,7 +14,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError, field_validator
 from sqlalchemy.exc import SQLAlchemyError
 from ai.logging import (current_diagnostic_identity, diagnostic_scope, log_execution,
-                        update_diagnostic_identity)
+                        update_diagnostic_identity, traced, log_transformation, trace_span)
 from shared.validation import validate_trip_request
 
 from shared.errors import ApplicationError
@@ -130,7 +130,15 @@ class LangGraphOrchestrator:
                 event_type='workflow.route', phase='selected', result={
                     'target': 'END' if target == END else target, 'reason': reason,
                     'status': r.state.status, 'transitions': r.transitions,
-                    'completed_steps': r.state.completed_steps, 'route_provider': r.route_provider})
+                    'completed_steps': r.state.completed_steps, 'route_provider': r.route_provider,
+                    'current_node': r.state.current_step,
+                    'missing_fields': r.outputs['request_parser'].missing_fields if 'request_parser' in r.outputs else [],
+                    'pending_questions': r.pending_questions,
+                    'evaluated': {'awaiting_final_resolve': r.awaiting_final_resolve,
+                        'stop_reason': r.stop_reason, 'visits': r.visits, 'revisions': r.revisions,
+                        'retries': r.retries, 'limits': self.limits,
+                        'planning_status': r.outputs['planning_engine'].status if 'planning_engine' in r.outputs else None,
+                        'validator_action': r.outputs['validator'].suggested_action if 'validator' in r.outputs else None}})
             return target
         if r.awaiting_final_resolve:
             return route(END, 'awaiting_final_resolve')
@@ -203,6 +211,11 @@ class LangGraphOrchestrator:
             if self.persistence:
                 self.persistence.save(r, step, value, artifact_id)
         StateMachine(r).update(completed_steps=[*r.state.completed_steps, step])
+        log_execution(workflow_id=r.state.request_id, trip_id=r.state.trip_id,
+            step=step, event_type='artifact.saved', phase='completed', result={
+                'component': step, 'source': 'code: LangGraphOrchestrator._save',
+                'artifact_field': ref, 'artifact_id': getattr(r.state.artifacts, ref) if ref else None,
+                'output': value})
 
     def _attempt(self, r, result, violations):
         p = r.outputs["planning_input_builder"]
@@ -213,6 +226,7 @@ class LangGraphOrchestrator:
             validation_result_id=r.state.artifacts.validation_result_id)])
 
     def _node(self, step):
+        @traced(step, metadata=lambda state: {'execution_mode': state['run'].mode})
         async def invoke(state):
             r = state["run"].model_copy(deep=True)
             sm = StateMachine(r)
@@ -260,7 +274,8 @@ class LangGraphOrchestrator:
                     event_type='workflow.validation', phase='started',
                     input={'node': step, 'raw_output': raw,
                            'output_schema': TypeAdapter(OUTPUTS[STEPS.index(step)]).json_schema()})
-                value = TypeAdapter(OUTPUTS[STEPS.index(step)]).validate_python(raw, strict=step == "explainer")
+                with trace_span('validation'):
+                    value = TypeAdapter(OUTPUTS[STEPS.index(step)]).validate_python(raw, strict=step == "explainer")
                 log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
                     event_type='workflow.validation', phase='succeeded',
                     input={'node': step, 'raw_output': raw}, output={'validated_output': value})
@@ -288,6 +303,8 @@ class LangGraphOrchestrator:
                             question_open=any(q.status == 'open' for q in r.pending_questions))
                 if step == 'destination_agent':
                     value = self._destination_selection(r, value)
+                log_transformation(raw, value, component=step,
+                    source='code: output validation and node processing')
                 self._save(r, step, value)
                 self._outcome(r, step, value,
                               question_drafts=state.get('question_drafts', ()) if step == 'request_parser' else ())
@@ -860,6 +877,10 @@ class LangGraphOrchestrator:
         log_execution(run_id=result.state.request_id, trip_id=result.state.trip_id,
             step='run_turn.completed', event_type='workflow.run', phase='completed', result={
                 'state': result.state, 'visits': result.visits, 'transitions': result.transitions,
+                'stop_reason': ('limit_exceeded' if result.stop_reason and 'limit' in result.stop_reason
+                                else 'awaiting_user_input' if result.state.status in {'clarifying', 'awaiting_relaxation'}
+                                else 'awaiting_final_resolve' if result.awaiting_final_resolve
+                                else result.state.status),
                 'revisions': result.revisions, 'retries': result.retries,
                 'output_steps': list(result.outputs), 'attempts': result.attempts,
                 'errors': result.errors, 'pending_questions': result.pending_questions,

@@ -6,7 +6,7 @@ from openai import (AsyncOpenAI, APIConnectionError, APITimeoutError,
                     APIError, APIStatusError, AuthenticationError, RateLimitError)
 
 from ai.agents.llm import LLMResponse, ToolCall, TransientLLMError, ProviderError
-from ai.logging import log_execution
+from ai.logging import log_execution, traced
 
 
 def strict_schema(schema):
@@ -34,6 +34,7 @@ class OpenAILLMAdapter:
         if self._owns_client:
             await self.client.close()
 
+    @traced('llm.provider')
     async def respond(self, request):
         items = []
         for message in request.messages:
@@ -65,7 +66,7 @@ class OpenAILLMAdapter:
             if self.include_encrypted_reasoning:
                 payload['include'] = ['reasoning.encrypted_content']
             log_execution(step='llm.provider', event_type='llm.provider_request', phase='sent',
-                input={'adapter_request': request.model_dump(mode='json'), 'provider_payload': payload})
+                input={'provider_payload': payload}, result={'provider': 'openai-compatible', 'model': self.model})
             response = await self.client.responses.create(**payload)
         except AuthenticationError as exc:
             raise ProviderError('LLM_AUTHENTICATION_ERROR', diagnostic=_diagnostic(exc)) from None
@@ -84,6 +85,9 @@ class OpenAILLMAdapter:
             # SDK/API-shape incompatibilities must not be collapsed into the
             # harness's opaque LLM_EXECUTION_ERROR.
             raise ProviderError('LLM_ADAPTER_ERROR', diagnostic=_diagnostic(exc)) from None
+        log_execution(step='llm.provider', event_type='llm.provider_raw_response', phase='received',
+            result={'provider': 'openai-compatible', 'model': self.model,
+                    'response': response.model_dump(mode='json') if hasattr(response, 'model_dump') else str(response)})
         if response.status != 'completed':
             raise ProviderError('LLM_INCOMPLETE_RESPONSE')
         output = [item.model_dump(mode='json', exclude_none=True) for item in response.output]

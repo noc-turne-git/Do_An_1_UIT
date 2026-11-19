@@ -34,6 +34,12 @@ QuestionKind = Literal["trip_request", "destination_info", "destination_choice"]
 PositiveInt = Annotated[StrictInt, Field(gt=0)]
 NonEmpty = Annotated[str, Field(min_length=1, pattern=r"\S")]
 TRIP_NEVER_DEFAULT = frozenset({'trip.start_date', 'trip.end_date', 'travelers.adults'})
+# A field may deliberately remain null when the user has explicitly declined to
+# constrain it.  Such a decision closes collection for this field; it is not
+# the same as UNKNOWN, which means we still need an answer or a delegation.
+FIELD_DECISIONS_THAT_CLOSE_COLLECTION = frozenset({
+    'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE', 'DEFERRED',
+})
 
 
 class SelectionProvenance(Model):
@@ -241,14 +247,25 @@ class TripRequest(Contract):
             required["destination.city"] = self.destination.city
         elif self.destination.selection_intent == 'USER_UNKNOWN':
             required['destination.city'] = self.destination.city
-        unresolved = lambda value: value is None or (isinstance(value, str) and not value.strip())
+        def unresolved(path, value):
+            if value is None or (isinstance(value, str) and not value.strip()):
+                return True
+            # Empty collections are valid explicit preferences (for example,
+            # "không có sở thích").  They are unresolved only when the parser
+            # recorded UNKNOWN rather than an affirmative user decision.
+            return (self.meta.field_decisions.get(path) == 'UNKNOWN'
+                    and isinstance(value, (list, dict)) and not value)
         self.missing_fields = [path for path, value in required.items()
-            if unresolved(value) and (path.startswith('destination.') or
-                path in TRIP_NEVER_DEFAULT or self.meta.field_decisions.get(path)
-                not in {'UNKNOWN', 'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE'} and
-                not (self.meta.parser_status is None and
-                     self.meta.field_sources.get(path) == 'user' and
-                     path not in self.meta.field_decisions))]
+            if unresolved(path, value) and (
+                # Destination has its own policy state machine.  An explicit
+                # city and USER_UNKNOWN require an answer; ANY_DESTINATION
+                # and DELEGATE_SELECTION are resolved by the destination flow.
+                path.startswith('destination.') or
+                # Elsewhere, only an absent decision or UNKNOWN remains an
+                # actionable clarification.  A user-confirmed refusal,
+                # flexibility, or delegation must never be asked again.
+                self.meta.field_decisions.get(path) not in FIELD_DECISIONS_THAT_CLOSE_COLLECTION
+            )]
         if self.travelers.adults == 0 and self.travelers.children == 0:
             self.missing_fields.append('travelers.adults')
         return self

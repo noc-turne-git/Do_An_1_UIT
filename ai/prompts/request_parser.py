@@ -19,6 +19,9 @@ Trả summary xác nhận ngắn gọn thông tin người dùng vừa cung cấ
 Trả questions gồm fields và question tiếng Việt tự nhiên, ưu tiên gom ngày đi/ngày về,
 người lớn/trẻ em, ngân sách/phạm vi thành câu hỏi chung. Chỉ hỏi tối đa ba nhóm thực sự còn thiếu
 sau khi áp dụng changes; không hỏi lại FLEXIBLE/AI_DECIDE/NO_PREFERENCE hoặc DEFERRED.
+UNKNOWN nghĩa là người dùng chưa cung cấp giá trị; trường này vẫn cần được hỏi lại. Khi người dùng
+nói rõ không muốn cung cấp/để sau = DEFERRED; không hỏi lại trường đó trong phiên thu thập hiện tại.
+FLEXIBLE, AI_DECIDE và NO_PREFERENCE cũng xác nhận rằng không cần hỏi lại trường tương ứng.
 UNKNOWN: đề xuất các lựa chọn hoặc hỏi có muốn AI quyết định không. Số người không thể tự chọn,
 giải thích cần số người thực tế. Không tự đưa giá trị đề xuất vào changes nếu chưa được đồng ý.
 Trả changes chỉ cho các trường người dùng mới cung cấp hoặc sửa; giữ nguyên các trường khác.
@@ -30,10 +33,13 @@ không quan trọng = NO_PREFERENCE; để sau = DEFERRED. Các quyết định 
 Ánh xạ câu trả lời ngắn theo câu hỏi assistant gần nhất; không áp dụng tùy chọn cho mọi trường.
 Nếu người dùng giao chọn điểm đến, đặt destination.selection_mode='implicit' với SPECIFIED,
 và destination.city=null với quyết định tương ứng. Không chọn thành phố thay họ.
-Phân biệt ý định điểm đến: "chưa biết" = UNKNOWN, "đâu cũng được" = FLEXIBLE,
-"bạn chọn giúp" = AI_DECIDE. Nếu vừa chưa biết vừa nhờ chọn, dùng AI_DECIDE
-cho destination.city; chỉ UNKNOWN không cấp quyền chọn. Địa danh cụ thể do user
-nêu phải trích xuất thành destination.city SPECIFIED để CODE kiểm tra tiếp.
+Khi cần hỏi điểm đến, hỏi trực tiếp người dùng muốn đi đâu hoặc muốn AI chọn giúp. Phân biệt
+ý định điểm đến: địa danh cụ thể = EXPLICIT; "chưa biết" = USER_UNKNOWN (vẫn cần user chọn
+sau khi có gợi ý); "đâu cũng được" = ANY_DESTINATION (user không nêu nơi cụ thể nhưng vẫn là
+người chọn khi có lựa chọn); "bạn chọn giúp" = DELEGATE_SELECTION (agent có quyền chọn).
+Nếu vừa chưa biết vừa nhờ chọn, dùng AI_DECIDE cho destination.city. Chỉ USER_UNKNOWN không
+cấp quyền chọn cho agent. Địa danh cụ thể do user nêu phải trích xuất thành
+destination.city SPECIFIED để CODE kiểm tra tiếp.
 Với người lớn/trẻ em không tự quyết số lượng; giữ null khi chưa có câu trả lời cụ thể.
 Ngày tương đối dựa current_date và timezone được truyền vào. Trích xuất start_date,
 end_date nếu người dùng nêu rõ và duration_days nếu người dùng nêu số ngày; đừng bỏ

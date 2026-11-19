@@ -1,5 +1,4 @@
 import logging
-from contextlib import nullcontext
 from time import monotonic
 from uuid import uuid4
 from contextlib import asynccontextmanager
@@ -17,8 +16,7 @@ from app.api.dev_workflows import router as dev_workflows_router
 from app.api.workflows import router as workflows_router
 from app.core.config import Settings, get_settings
 from shared.errors import ApplicationError
-from app.core.logging import configure_logging
-from ai.logging import diagnostic_scope
+from app.core.logging import configure_logging, RuntimeTraceMiddleware
 from app.db.session import Database
 
 logger = logging.getLogger(__name__)
@@ -26,10 +24,10 @@ logger = logging.getLogger(__name__)
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    configure_logging(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        configure_logging(settings)
         app.state.database = Database(settings)
         logger.info("API started; database configured: %s", settings.database_url is not None)
         try:
@@ -46,6 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chat_router)
     app.include_router(dev_workflows_router)
     app.include_router(workflows_router)
+    app.add_middleware(RuntimeTraceMiddleware)
 
     @app.middleware('http')
     async def request_log(request: Request, call_next):
@@ -55,8 +54,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         trace_run_id = str(uuid4()) if is_chat_turn else None
         request.state.diagnostic_run_id = trace_run_id
         started = monotonic()
-        with diagnostic_scope(run_id=trace_run_id, request_id=request_id) if is_chat_turn else nullcontext():
-            response = await call_next(request)
+        response = await call_next(request)
         response.headers['X-Request-ID'] = request_id
         if trace_run_id:
             response.headers['X-Trace-Run-ID'] = trace_run_id

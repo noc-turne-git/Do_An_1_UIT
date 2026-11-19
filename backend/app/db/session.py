@@ -2,6 +2,7 @@ from collections.abc import Iterator
 import logging
 import re
 from time import monotonic
+from uuid import uuid4
 
 from fastapi import Request
 from sqlalchemy import create_engine, event
@@ -11,11 +12,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.config import Settings
 from shared.errors import ApplicationError
 from app.core.logging import log_message
-from ai.logging import current_diagnostic_identity, log_execution
+from ai.logging import log_execution, trace_enabled, current_span_id
 from app.db.models import MessageRecord
 
 logger = logging.getLogger(__name__)
 _TABLE = re.compile(r'\b(?:FROM|JOIN|INTO|UPDATE)\s+"?([A-Za-z_][A-Za-z_0-9]*)"?', re.IGNORECASE)
+_PRIVATE_COLUMN = re.compile(r'password|secret|api.?key|authorization|credential|passport|national_id|card_number', re.IGNORECASE)
 
 
 def _statement_info(statement):
@@ -26,12 +28,17 @@ def _statement_info(statement):
 
 def _before_statement(conn, cursor, statement, parameters, context, executemany):
     try:
-        if current_diagnostic_identity().get('conversation_id'):
+        if trace_enabled():
+            # Positional binds carry no key for central redaction. If a private
+            # column is involved, conservatively hide that statement's binds.
+            safe_parameters = '[REDACTED_PRIVATE_BINDS]' if _PRIVATE_COLUMN.search(statement) else parameters
             record = {'started': monotonic(), 'statement': statement,
-                      'parameters': parameters, 'executemany': executemany}
+                      'parameters': safe_parameters, 'executemany': executemany,
+                      'span_id': str(uuid4()), 'parent_span_id': current_span_id()}
             conn.info.setdefault('diagnostic_statement_times', []).append(record)
             log_execution(step='database.statement', event_type='database.statement', phase='started',
-                          input={**_statement_info(statement), 'parameters': parameters,
+                          span_id=record['span_id'], parent_span_id=record['parent_span_id'],
+                          input={**_statement_info(statement), 'parameters': safe_parameters,
                                  'executemany': executemany},
                           result={k: v for k, v in _statement_info(statement).items()
                                   if k in {'operation', 'tables'}})
@@ -47,6 +54,7 @@ def _after_statement(conn, cursor, statement, parameters, context, executemany):
         record = times.pop()
         rowcount = cursor.rowcount
         log_execution(step='database.statement', event_type='database.statement', phase='completed',
+                      span_id=record['span_id'], parent_span_id=record['parent_span_id'],
                       input={**_statement_info(record['statement']), 'parameters': record['parameters'],
                              'executemany': record['executemany']},
                       result={**{k: v for k, v in _statement_info(record['statement']).items()
@@ -65,6 +73,7 @@ def _statement_error(context):
             return
         record = times.pop()
         log_execution(step='database.statement', event_type='database.statement', phase='failed',
+                      span_id=record['span_id'], parent_span_id=record['parent_span_id'],
                       input={**_statement_info(record['statement']), 'parameters': record['parameters'],
                              'executemany': record['executemany']},
                       result={**{k: v for k, v in _statement_info(record['statement']).items()
