@@ -35,11 +35,13 @@ _SENSITIVE_KEY = re.compile(
     r'|^(?:token|access_token|refresh_token|id_token|session_token|auth_token)$')
 # Deliberately do not treat user/business text, email addresses, locations, or
 # prompts as sensitive. Operators need those values to reconstruct a turn.
+_DATABASE_URL_CREDENTIAL = re.compile(
+    r'(?ix)\b(?P<scheme>postgres(?:ql)?|mysql)://(?P<user>[^\s:/@]+):'
+    r'(?P<password>[^\s@/]+)@')
 _SECRET_IN_TEXT = re.compile(
-    r'(?ix)(?:\bbearer\s+[-._~+/=a-z0-9]+|\bsk-(?:proj-)?[a-z0-9_-]+|'
+    r'(?ix)\bbearer\s+[-._~+/=a-z0-9]+|\bsk-(?:proj-)?[a-z0-9_-]+|'
     r'\b(?:eyJ[a-z0-9_-]+\.)[a-z0-9_.-]+|\bAKIA[0-9A-Z]{16}|'
-    r'\b(?:api[_-]?key|client_secret|password)\s*[:=]\s*[^\s,;]+|'
-    r'\b(?:postgres(?:ql)?|mysql)://[^\s:/]+:[^\s@]+@)')
+    r'\b(?:api[_-]?key|client_secret|password)\s*[:=]\s*[^\s,;]+')
 _settings = {'trace_root': DEFAULT_TRACE_ROOT, 'retention_days': 30,
              'last_prune': None}
 
@@ -80,6 +82,12 @@ def mask(value, *, key=None):
     if isinstance(value, list):
         return [mask(v, key=key) for v in value]
     if isinstance(value, str):
+        # Keep the non-secret portions of a connection URL useful for
+        # diagnosis (driver, account, host, and database), while masking only
+        # its password.
+        value = _DATABASE_URL_CREDENTIAL.sub(
+            lambda match: f"{match.group('scheme')}://{match.group('user')}:"
+            '[REDACTED_SECRET]@', value)
         return _SECRET_IN_TEXT.sub('[REDACTED_SECRET]', value)
     return value
 

@@ -25,11 +25,12 @@ def test_backend_console_and_per_run_jsonl(tmp_path, caplog):
     assert {'schema_version', 'event_type', 'conversation_id', 'run_id', 'workflow_id',
             'trip_id', 'timestamp', 'step', 'result', 'error'} <= set(row)
     assert row['run_id'] == 'r1' and row['trip_id'] == 't1'
-    assert row['result']['api_key']['redacted'] is True
+    assert row['result']['api_key'] == '[REDACTED_SECRET]'
+    assert row['result']['content'] == 'private raw message'
     assert 'private raw message' not in caplog.text and 'sk-private' not in caplog.text
 
 
-def test_execution_log_serializes_a_safe_pydantic_snapshot(tmp_path):
+def test_execution_log_serializes_a_complete_pydantic_snapshot(tmp_path):
     path = tmp_path / 'execution.jsonl'
     configure_logging(Settings(_env_file=None, ai_log_file=path))
     request = empty_request()
@@ -41,11 +42,11 @@ def test_execution_log_serializes_a_safe_pydantic_snapshot(tmp_path):
     row = json.loads(trace.read_text(encoding='utf-8').splitlines()[-1])
     snapshot = row['result']['request']
     assert snapshot['destination']['candidate_cities'] == []
-    assert snapshot['meta']['raw_prompt']['redacted'] is True
-    assert snapshot['must_do']['redacted'] is True
+    assert snapshot['meta']['raw_prompt'] == 'private user request'
+    assert snapshot['must_do'] == ['private requirement']
 
 
-def test_database_statement_trace_excludes_sql_and_bound_parameters(tmp_path):
+def test_database_statement_trace_preserves_sql_and_bound_parameters(tmp_path):
     configure_logging(Settings(_env_file=None, ai_log_file=tmp_path / 'execution.jsonl'))
     engine = create_engine('sqlite:///:memory:')
     event.listen(engine, 'before_cursor_execute', _before_statement)
@@ -60,5 +61,6 @@ def test_database_statement_trace_excludes_sql_and_bound_parameters(tmp_path):
     events = [json.loads(line) for line in trace.read_text(encoding='utf-8').splitlines()]
     assert {'INSERT', 'SELECT'} <= {row['result']['operation'] for row in events}
     assert any('trips' in row['result']['tables'] for row in events)
-    assert 'private@example.com' not in trace.read_text(encoding='utf-8')
-    assert 'VALUES' not in trace.read_text(encoding='utf-8')
+    contents = trace.read_text(encoding='utf-8')
+    assert 'private@example.com' in contents
+    assert 'VALUES' in contents

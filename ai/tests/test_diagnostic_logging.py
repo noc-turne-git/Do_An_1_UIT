@@ -15,7 +15,7 @@ def read_events(path):
     return [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
 
 
-def test_trace_correlates_conversation_and_run_and_redacts(tmp_path):
+def test_trace_correlates_conversation_and_run_and_redacts_credentials(tmp_path):
     configure_ai_logging(tmp_path / 'execution.jsonl')
     request = empty_request()
     request.meta.raw_prompt = 'call me at private@example.com with sk-secret'
@@ -28,8 +28,11 @@ def test_trace_correlates_conversation_and_run_and_redacts(tmp_path):
     assert {event['run_id'] for event in events} == {'run-a'}
     assert {event['workflow_id'] for event in events} == {'workflow-a'}
     text = json.dumps(events)
-    assert 'private@example.com' not in text and 'sk-secret' not in text and 'private answer' not in text
-    assert events[0]['result']['request']['meta']['raw_prompt']['redacted'] is True
+    assert 'private@example.com' in text
+    assert 'private answer' in text
+    assert 'sk-secret' not in text
+    assert events[0]['result']['request']['meta']['raw_prompt'] == (
+        'call me at private@example.com with [REDACTED_SECRET]')
     assert trace_paths(conversation_id='conversation-a', root=tmp_path / 'conversations') == [
         tmp_path / 'conversations' / 'conversation-a' / 'runs' / 'run-a' / 'events.jsonl']
     assert trace_paths(run_id='run-a', root=tmp_path / 'conversations') == trace_paths(
@@ -77,15 +80,16 @@ def test_logging_failure_never_interrupts_execution(tmp_path, monkeypatch):
         assert log_execution(step='test', result={'safe': True}) is None
 
 
-def test_oversized_event_is_compacted_before_persistence(tmp_path, monkeypatch):
+def test_oversized_event_is_preserved_for_diagnostics(tmp_path, monkeypatch):
     configure_ai_logging(tmp_path / 'execution.jsonl')
     monkeypatch.setattr('ai.logging.MAX_EVENT_BYTES', 400)
     with diagnostic_scope(conversation_id='c', run_id='r'):
         log_execution(step='test', result={'state': {'status': 'completed'},
                       'payload': list(range(100))})
     event = read_events(tmp_path / 'conversations' / 'c' / 'runs' / 'r' / 'events.jsonl')[0]
-    assert event['result']['truncated'] is True
+    assert 'truncated' not in event['result']
     assert event['result']['state'] == {'status': 'completed'}
+    assert event['result']['payload'] == list(range(100))
 
 
 def test_complete_mock_workflow_trace_has_routes_nodes_and_final_state(tmp_path):
@@ -119,18 +123,22 @@ def test_direct_graph_turns_get_distinct_run_ids_for_same_workflow(tmp_path):
                    for event in read_events(folder / 'events.jsonl')) for folder in folders)
 
 
-def test_free_text_and_location_values_are_redacted_but_policy_is_visible(tmp_path):
+def test_free_text_and_location_values_are_preserved_but_credentials_are_redacted(tmp_path):
     configure_ai_logging(tmp_path / 'execution.jsonl')
     with diagnostic_scope(conversation_id='c', run_id='r'):
         log_execution(step='destination_agent', result={
             'selected_region': {'city': 'Private destination'},
             'selection_reason': 'User wants a secret location',
+            'authorization': 'Bearer credential-token',
+            'database': 'postgresql://planner:db-password@db.example/trips',
             'selection_intent': 'DELEGATE_SELECTION', 'token_usage': {'total_tokens': 19},
             'field_decisions': {'destination.city': 'AI_DECIDE'},
             'message_id': '8c0b3ed0-c127-4351-a6ee-9737656118ed'})
     event = read_events(tmp_path / 'conversations' / 'c' / 'runs' / 'r' / 'events.jsonl')[0]
-    assert event['result']['selected_region']['city']['redacted'] is True
-    assert event['result']['selection_reason']['redacted'] is True
+    assert event['result']['selected_region']['city'] == 'Private destination'
+    assert event['result']['selection_reason'] == 'User wants a secret location'
+    assert event['result']['authorization'] == '[REDACTED_SECRET]'
+    assert event['result']['database'] == 'postgresql://planner:[REDACTED_SECRET]@db.example/trips'
     assert event['result']['selection_intent'] == 'DELEGATE_SELECTION'
     assert event['result']['token_usage']['total_tokens'] == 19
     assert event['result']['field_decisions']['destination.city'] == 'AI_DECIDE'
