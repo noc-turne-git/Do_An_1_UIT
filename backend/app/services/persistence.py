@@ -8,6 +8,7 @@ from app.repositories.workflows import OwnedRepository, RequestRepository
 from app.repositories.artifacts import ArtifactRepository
 from app.repositories.results import ResultRepository
 from app.repositories.places import PlaceRepository
+from ai.logging import log_execution
 
 TYPES = dict(request_parser='trip_request', destination_agent='destination_result',
     constraint_planner='time_constraints', place_agent='candidates', budget_module='costed_candidates',
@@ -22,12 +23,21 @@ class WorkflowPersistence(OwnedRepository):
             if row.status == 'completed':
                 row.status = 'parsing'
                 self.session.flush()
+            log_execution(run_id=row.request_id, trip_id=row.trip_id, step='persistence.prepare_turn',
+                event_type='database.workflow', phase='read_update', result={
+                    'operation': 'resume_workflow', 'workflow_id': row.request_id,
+                    'previous_status': previous.state.status, 'status_reset': row.status == 'parsing',
+                    'previous_run': previous, 'request': request})
             return row.trip_id, row.request_id
         if request_id is None:
             if trip_id is None:
                 trip_id = TripRepository(self.session, self.user_id).create(title=request.destination.city).trip_id
             request_id = RequestRepository(self.session, self.user_id).create(
                 trip_id, schema_version=request.schema_version).request_id
+        log_execution(run_id=request_id, trip_id=trip_id, step='persistence.prepare_turn',
+            event_type='database.workflow', phase='created', result={
+                'operation': 'create_workflow', 'workflow_id': request_id, 'trip_created': trip_id is not None,
+                'request': request})
         return trip_id, request_id
 
     def ensure_episode(self, run, policy):
@@ -74,7 +84,17 @@ class WorkflowPersistence(OwnedRepository):
         self.save_graph(run)
         # This is a business operation boundary, not a savepoint: a restart must
         # see the claim even if the provider or a later planning node crashes.
-        self.session.commit()
+        try:
+            self.session.commit()
+            log_execution(run_id=run.state.request_id, trip_id=run.state.trip_id,
+                step='persistence.final_checkpoint', event_type='database.transaction', phase='committed',
+                result={'operation': 'final_resolve_checkpoint', 'episode_id': episode.episode_id,
+                        'final_resolve_status': episode.final_resolve_status})
+        except Exception as exc:
+            log_execution(run_id=run.state.request_id, trip_id=run.state.trip_id,
+                step='persistence.final_checkpoint', event_type='database.transaction', phase='failed',
+                error=exc)
+            raise
 
     def claim_final_resolve(self, run, operation_id):
         from app.repositories.clarifications import ClarificationRepository
@@ -150,6 +170,10 @@ class WorkflowPersistence(OwnedRepository):
             self._validate_canonical(run)
         row.graph_snapshot = run.model_dump(mode="json")
         self.session.flush()
+        log_execution(run_id=run.state.request_id, trip_id=run.state.trip_id, step='persistence.save_graph',
+            event_type='database.write', phase='flushed', result={'operation': 'graph_snapshot',
+                'status': run.state.status, 'completed_steps': run.state.completed_steps,
+                'graph_snapshot': row.graph_snapshot})
 
     def load_graph(self, request_id):
         from ai.orchestration.graph_workflow import GraphRun
@@ -162,6 +186,10 @@ class WorkflowPersistence(OwnedRepository):
             raise ApplicationError("planning_input_inconsistent", "Graph snapshot and request differ")
         if row.active_episode_id:
             self._validate_canonical(run)
+        log_execution(run_id=request_id, trip_id=row.trip_id, step='persistence.load_graph',
+            event_type='database.read', phase='completed', result={'operation': 'graph_snapshot',
+                'workflow_id': request_id, 'status': row.status, 'has_active_episode': bool(row.active_episode_id),
+                'graph_snapshot': row.graph_snapshot, 'run': run})
         return run
 
     def _validate_canonical(self, run):
@@ -182,8 +210,18 @@ class WorkflowPersistence(OwnedRepository):
 
     def save(self, run, step, value, artifact_id):
         # A node is atomic even when Python mapping raises before DB commit.
-        with self.session.begin_nested():
-            self._save(run, step, value, artifact_id)
+        try:
+            with self.session.begin_nested():
+                self._save(run, step, value, artifact_id)
+            log_execution(run_id=run.state.request_id, trip_id=run.state.trip_id, step='persistence.save',
+                event_type='database.write', phase='savepoint_committed', result={'operation': 'artifact_save',
+                    'node': step, 'artifact_id': artifact_id, 'artifact_type': TYPES[step],
+                    'artifact_value': value, 'run_state': run.state})
+        except Exception as exc:
+            log_execution(run_id=run.state.request_id, trip_id=run.state.trip_id, step='persistence.save',
+                event_type='database.write', phase='savepoint_rolled_back',
+                result={'operation': 'artifact_save', 'node': step}, error=exc)
+            raise
 
     def _save(self, run, step, value, artifact_id):
         request_id = run.state.request_id
@@ -201,8 +239,18 @@ class WorkflowPersistence(OwnedRepository):
             results.validation(request_id, artifact, run.state.artifacts.itinerary_id, value)
 
     def sync(self, run):
-        with self.session.begin_nested():
-            self._sync(run)
+        try:
+            with self.session.begin_nested():
+                self._sync(run)
+            log_execution(run_id=run.state.request_id, trip_id=run.state.trip_id, step='persistence.sync',
+                event_type='database.write', phase='savepoint_committed', result={'operation': 'workflow_sync',
+                    'status': run.state.status, 'attempts': len(run.attempts), 'errors': len(run.errors),
+                    'pending_questions': len(run.pending_questions), 'run': run})
+        except Exception as exc:
+            log_execution(run_id=run.state.request_id, trip_id=run.state.trip_id, step='persistence.sync',
+                event_type='database.write', phase='savepoint_rolled_back',
+                result={'operation': 'workflow_sync'}, error=exc)
+            raise
 
     def _sync(self, run):
         # Close the episode before the workflow becomes immutable/terminal.

@@ -13,7 +13,8 @@ from langgraph.errors import NodeCancelledError
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError, field_validator
 from sqlalchemy.exc import SQLAlchemyError
-from ai.logging import log_execution
+from ai.logging import (current_diagnostic_identity, diagnostic_scope, log_execution,
+                        update_diagnostic_identity)
 from shared.validation import validate_trip_request
 
 from shared.errors import ApplicationError
@@ -123,12 +124,19 @@ class LangGraphOrchestrator:
     def _route(self, state):
         """Called by LangGraph after each node; no component is invoked here."""
         r = state["run"]
+        def route(target, reason):
+            log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=r.state.current_step,
+                event_type='workflow.route', phase='selected', result={
+                    'target': 'END' if target == END else target, 'reason': reason,
+                    'status': r.state.status, 'transitions': r.transitions,
+                    'completed_steps': r.state.completed_steps, 'route_provider': r.route_provider})
+            return target
         if r.awaiting_final_resolve:
-            return END
+            return route(END, 'awaiting_final_resolve')
         if r.state.status in {"completed", "failed", "clarifying", "awaiting_relaxation"}:
-            return END
+            return route(END, 'terminal_or_waiting_state')
         if r.stop_reason or r.transitions >= self.limits.max_transitions:
-            return "halt"
+            return route('halt', r.stop_reason or 'transition_limit')
         if r.route_provider:
             target = r.route_provider
         else:
@@ -143,15 +151,16 @@ class LangGraphOrchestrator:
             else:
                 target = next((s for s in STEPS if s not in o), END)
         if target == END:
-            return END
+            return route(END, 'all_steps_complete')
         if r.visits.get(target, 0) and r.revisions >= self.limits.max_revisions:
-            return "halt"
+            return route('halt', 'revision_limit')
         if target == "planning_engine" and r.visits.get(target, 0):
             maximum = min(self.limits.max_retries, r.outputs["planning_input_builder"].solver_config.max_retries)
             if r.retries >= maximum:
-                return "halt"
+                return route('halt', 'retry_limit')
         # Refresh prerequisites before invoking the requested provider.
-        return next((s for s in STEPS[:STEPS.index(target)] if s not in r.outputs), target)
+        next_step = next((s for s in STEPS[:STEPS.index(target)] if s not in r.outputs), target)
+        return route(next_step, r.route_reason or ('refresh_prerequisite' if next_step != target else 'next_step'))
 
     async def _halt(self, state):
         r = state["run"].model_copy(deep=True)
@@ -162,6 +171,8 @@ class LangGraphOrchestrator:
         r.explanation = None
         r.stop_reason = reason
         r.history.append(dict(event="halt", reason=reason, transitions=r.transitions))
+        log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step='halt',
+            event_type='workflow.halt', phase='completed', result={'reason': reason, 'state': r.state})
         return {"run": r}
 
     def _invalidate(self, r, step):
@@ -218,6 +229,11 @@ class LangGraphOrchestrator:
                          invalidated=removed, dependency_refs=refs_before,
                          refs_before=r.state.artifacts.model_dump(mode="json"))
             r.history.append(event)
+            log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
+                event_type='workflow.node', phase='started', result={
+                    'visit': r.visits[step], 'rerun': rerun, 'route_reason': reason,
+                    'invalidated_steps': removed, 'state_before': state['run'].state,
+                    'state_after_invalidation': r.state, 'dependency_refs': refs_before})
             try:
                 if step == "planning_engine" and rerun:
                     r.retries += 1
@@ -239,7 +255,14 @@ class LangGraphOrchestrator:
                 raw = (raw.model_dump() if isinstance(raw, BaseModel) else
                        [v.model_dump() if isinstance(v, BaseModel) else v for v in raw]
                        if isinstance(raw, list) else raw)
+                log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
+                    event_type='workflow.validation', phase='started',
+                    input={'node': step, 'raw_output': raw,
+                           'output_schema': TypeAdapter(OUTPUTS[STEPS.index(step)]).json_schema()})
                 value = TypeAdapter(OUTPUTS[STEPS.index(step)]).validate_python(raw, strict=step == "explainer")
+                log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
+                    event_type='workflow.validation', phase='succeeded',
+                    input={'node': step, 'raw_output': raw}, output={'validated_output': value})
                 if step in {"planning_input_builder", "planning_engine", "validator"} and value.trip_id != r.state.trip_id:
                     raise ApplicationError("planning_input_inconsistent", "Trip IDs differ")
                 if step == 'request_parser':
@@ -267,15 +290,21 @@ class LangGraphOrchestrator:
                 self._save(r, step, value)
                 self._outcome(r, step, value)
                 event["refs_after"] = r.state.artifacts.model_dump(mode="json")
-            except InvalidAnswer:
+            except InvalidAnswer as exc:
                 # No accepted answer, no counter/default/final-resolve transition.
                 r = state['run'].model_copy(deep=True)
                 StateMachine(r).update(status='clarifying')
+                event['exception'] = {'type': 'InvalidAnswer', 'handling': 'restore_clarifying'}
+                log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
+                    event_type='workflow.validation', phase='failed', error=exc,
+                    input={'node': step, 'state': state})
             except FinalResolvePending:
                 r.awaiting_final_resolve = True
-            except SQLAlchemyError:
+                event['final_resolve'] = 'pending'
+            except SQLAlchemyError as exc:
                 log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id,
-                    step=step, error='persistence_error')
+                    step=step, event_type='database.workflow', phase='failed',
+                    input={'node': step, 'state': r.state}, error=exc)
                 raise
             except DataRequirement as exc:
                 # No arbitrary jumps or hidden continuations: provider must precede consumer.
@@ -285,7 +314,20 @@ class LangGraphOrchestrator:
                     r.route_provider, r.route_reason = exc.provider, exc.reason
                     r.exclude_place_ids = list(dict.fromkeys([*r.exclude_place_ids, *exc.exclude_place_ids]))
                     event["requirement"] = dict(provider=exc.provider, reason=exc.reason)
+                log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
+                    event_type='workflow.data_requirement', phase='raised',
+                    input={'node': step, 'state': r.state},
+                    result={'provider': exc.provider, 'reason': exc.reason,
+                            'exclude_place_ids': exc.exclude_place_ids})
             except ConstraintPlanningError as exc:
+                event['exception'] = {'type': type(exc).__name__, 'code': exc.code,
+                                      'message': exc.message, 'pending_fields': exc.pending_fields,
+                                      'issues': exc.issues}
+                log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
+                    event_type='workflow.constraint_error', phase='raised',
+                    input={'node': step, 'state': r.state}, error=exc,
+                    result={'code': exc.code, 'message': exc.message,
+                            'pending_fields': exc.pending_fields, 'issues': exc.issues})
                 if exc.pending_fields and all(i.code == "missing_required_field" for i in exc.issues):
                     StateMachine(r, self.persistence).clarify(
                         exc.pending_fields, request=r.outputs.get('request_parser'))
@@ -297,8 +339,16 @@ class LangGraphOrchestrator:
                 if step in {"planning_engine", "validator"}:
                     self._attempt(r, "error", [code])
                 sm.fail(step, code, message, getattr(exc, "retryable", False))
+                event['exception'] = {'type': type(exc).__name__, 'code': code,
+                                      'retryable': bool(getattr(exc, 'retryable', False))}
+                log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
+                    event_type='workflow.validation', phase='failed', error=exc,
+                    input={'node': step, 'state': state})
             log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
-                result={'status': r.state.status},
+                event_type='workflow.node', phase='completed',
+                result={'status': r.state.status, 'visit': r.visits[step],
+                        'output': r.outputs.get(step), 'event': event, 'state_after': r.state,
+                        'route_provider': r.route_provider, 'route_reason': r.route_reason},
                 error='workflow_failed' if r.state.status == 'failed' else None)
             return {"run": r}
         return invoke
@@ -308,9 +358,16 @@ class LangGraphOrchestrator:
         request = o.get("request_parser")
         destination, times = o.get("destination_agent"), o.get("constraint_planner")
         places = o.get("place_agent")
+        def stage_input(component, arguments):
+            log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
+                event_type='workflow.stage_input', phase='prepared',
+                input={'component': component, 'arguments': arguments,
+                       'workflow_state': r.state, 'prior_outputs': o})
         if step == "request_parser":
             incoming = state['request']
             if state.get('parsed_input'):
+                stage_input('request_parser', {'structured_request': incoming,
+                    'current_date': state['current_date'], 'parsed_input': True})
                 return incoming
             question = next((q for q in r.pending_questions if q.status == 'open'), None)
             answer = state.get('answer')
@@ -320,9 +377,13 @@ class LangGraphOrchestrator:
                 else None)
             if selected:
                 incoming = option_request(incoming, question, selected)
+            context = {"trip_request": incoming.model_dump(mode="json"), "answer_raw": state["answer_raw"],
+                       'pending_question': question.model_dump(mode='json') if question else None}
+            stage_input('request_parser', {'raw_prompt': incoming.meta.raw_prompt,
+                'current_date': state['current_date'], 'context': context,
+                'previous_request': state['previous_request']})
             return await c.request_parser.parse(incoming.meta.raw_prompt, current_date=state["current_date"],
-                context={"trip_request": incoming.model_dump(mode="json"), "answer_raw": state["answer_raw"],
-                         'pending_question': question.model_dump(mode='json') if question else None},
+                context=context,
                 previous_request=state["previous_request"])
         if step == "destination_agent":
             episode = r.state.destination_episode
@@ -355,6 +416,8 @@ class LangGraphOrchestrator:
                     **identity.get('metadata', {}), 'final_resolve_id': str(operation_id),
                     'final_resolve': True}})
                 try:
+                    stage_input('destination_agent.final_resolve', {'request': request,
+                        'episode': episode, 'operation_id': operation_id})
                     raw = await c.destination_agent.select(request)
                 except Exception as exc:
                     raise FinalResolvePending() from exc
@@ -368,19 +431,34 @@ class LangGraphOrchestrator:
                         final_resolve_status='completed', final_resolve_result=result))
                 StateMachine(r).update(destination_episode=episode)
                 return result
+            stage_input('destination_agent', {'request': request})
             return await c.destination_agent.select(request)
         if step == "constraint_planner":
+            stage_input('constraint_planner', {'request': request, 'destination': destination,
+                'defaults': self.defaults})
             return await c.constraint_planner.build(request, destination, defaults=deepcopy(self.defaults))
         if step == "place_agent":
+            stage_input('place_agent', {'request': request, 'destination': destination,
+                'time_constraints': times, 'max_candidates': r.candidate_limit,
+                'exclude_place_ids': r.exclude_place_ids})
             return await c.place_agent.find(request, destination, times, max_candidates=r.candidate_limit, exclude_place_ids=list(r.exclude_place_ids))
         if step == "budget_module":
+            stage_input('budget_module', {'request': request, 'places': places,
+                'must_visit_place_ids': [p.place_id for p in places if p.place_id in request.destination.must_visit or p.name in request.destination.must_visit]})
             return await c.budget_module.estimate(request, places, must_visit_place_ids=[p.place_id for p in places if p.place_id in request.destination.must_visit or p.name in request.destination.must_visit])
         if step == "planning_input_builder":
+            stage_input('planning_input_builder', {'trip_id': r.state.trip_id, 'request': request,
+                'destination': destination, 'time_constraints': times, 'places': places,
+                'budget': o['budget_module'], 'configuration': self.configuration})
             return await c.planning_input_builder.build(r.state.trip_id, request, destination, times, places, o["budget_module"], configuration=deepcopy(self.configuration))
         if step == "planning_engine":
+            stage_input('planning_engine', {'planning_input': o['planning_input_builder']})
             return await c.planning_engine.plan(o["planning_input_builder"])
         if step == "validator":
+            stage_input('validator', {'itinerary': o['planning_engine'],
+                'planning_input': o['planning_input_builder']})
             return await c.validator.validate(o["planning_engine"], o["planning_input_builder"])
+        stage_input('explainer', {'itinerary': o['planning_engine'], 'validation': o['validator']})
         return await c.explainer.explain(o["planning_engine"], o["validator"])
 
     def _update_episode_policy(self, r, request):
@@ -543,6 +621,29 @@ class LangGraphOrchestrator:
                        parser=None, seed=None, workflow_id=None, episode_id=None,
                        question_id=None, expected_transitions=None, answer=None,
                        answer_raw=None, trip_id=None, request_id=None, legacy=False):
+        if not current_diagnostic_identity().get('run_id'):
+            # Direct/offline graph callers have no HTTP envelope. Give every
+            # invocation its own run ID while keeping the public API unchanged.
+            with diagnostic_scope(conversation_id='standalone', run_id=uuid4(),
+                                  workflow_id=previous.state.request_id if previous else request_id,
+                                  trip_id=trip_id):
+                log_execution(step='run_turn', event_type='run_turn', phase='started',
+                    result={'direct_graph_call': True, 'has_previous_run': previous is not None,
+                            'user_input': content or answer_raw})
+                try:
+                    result = await self.run_turn(request, current_date=current_date, previous=previous,
+                        content=content, parser=parser, seed=seed, workflow_id=workflow_id,
+                        episode_id=episode_id, question_id=question_id,
+                        expected_transitions=expected_transitions, answer=answer, answer_raw=answer_raw,
+                        trip_id=trip_id, request_id=request_id, legacy=legacy)
+                    log_execution(step='run_turn', event_type='run_turn', phase='completed',
+                        result={'status': result.run.state.status if result.run else 'not_scheduled',
+                                'error_code': result.error})
+                    return result
+                except Exception as exc:
+                    log_execution(step='run_turn', event_type='run_turn', phase='failed',
+                                  error=exc)
+                    raise
         from ai.orchestration.turns import check_reference, TurnResult, StaleTurn, seed_after_failed
         from ai.orchestration.request_parser import empty_request
         question = check_reference(previous, workflow_id=workflow_id, episode_id=episode_id,
@@ -565,6 +666,10 @@ class LangGraphOrchestrator:
                                              if not k.startswith('destination.')})
             parsed = await parser(base, content, question, previous)
             if parsed.error or parsed.request is None or not parsed.planning:
+                log_execution(run_id=request_id, trip_id=trip_id, step='run_turn.completed',
+                    result={'parsed_request': parsed.request or old or base,
+                            'planning': parsed.planning, 'status': 'not_scheduled'},
+                    error=parsed.error)
                 return TurnResult(old or base, parsed.reply, parsed.error, parsed.planning, previous)
             request, reply = parsed.request, parsed.reply
             answer_raw = content
@@ -573,7 +678,10 @@ class LangGraphOrchestrator:
         validate_trip_request(request.model_dump(mode='json'))
         if previous and previous.state.status == 'failed':
             if legacy or answer_raw is None:
-                return TurnResult(old, reply, run=previous.model_copy(deep=True))
+                retained = previous.model_copy(deep=True)
+                log_execution(run_id=retained.state.request_id, trip_id=retained.state.trip_id,
+                    step='run_turn.completed', result={'run': retained, 'status': 'retained_failed'})
+                return TurnResult(old, reply, run=retained)
             request = seed_after_failed(old, request.destination, content or answer_raw)
             if self.persistence:
                 request_id, episode, request = self.persistence.new_workflow_after_failed(previous, request)
@@ -647,6 +755,7 @@ class LangGraphOrchestrator:
             max_clarification_rounds=self.clarification_policy.max_clarification_rounds,
             max_destination_rounds=self.clarification_policy.max_destination_rounds,
             pending_fields=[], retry_count=0))
+        update_diagnostic_identity(workflow_id=r.state.request_id, trip_id=r.state.trip_id)
         if previous and previous.limits:
             self.limits = previous.limits.model_copy(deep=True)
         r.limits = self.limits.model_copy(deep=True)
@@ -658,6 +767,11 @@ class LangGraphOrchestrator:
                     max_destination_rounds=r.state.max_destination_rounds, **policy.model_dump()))
             StateMachine(r).update(destination_episode=episode, destination_round=episode.destination_round)
         r.awaiting_final_resolve = False  # Refresh the durable operation on retry.
+        log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step='run_turn.started',
+            event_type='workflow.run', phase='started', result={'current_date': current_date, 'request': request,
+                    'previous_status': previous.state.status if previous else None,
+                    'previous_state': previous.state if previous else None,
+                    'parsed_input': parsed_input, 'canonical': canonical})
         old = r.outputs.get("request_parser")
         if previous:
             if previous.state.status == 'completed':
@@ -717,4 +831,12 @@ class LangGraphOrchestrator:
         if self.persistence:
             self.persistence.sync(result)
             self.persistence.save_graph(result)
+        log_execution(run_id=result.state.request_id, trip_id=result.state.trip_id,
+            step='run_turn.completed', event_type='workflow.run', phase='completed', result={
+                'state': result.state, 'visits': result.visits, 'transitions': result.transitions,
+                'revisions': result.revisions, 'retries': result.retries,
+                'output_steps': list(result.outputs), 'attempts': result.attempts,
+                'errors': result.errors, 'pending_questions': result.pending_questions,
+                'final_result': result.final_result, 'explanation': result.explanation},
+            error='workflow_failed' if result.state.status == 'failed' else None)
         return result

@@ -1,4 +1,5 @@
 import logging
+from contextlib import nullcontext
 from time import monotonic
 from uuid import uuid4
 from contextlib import asynccontextmanager
@@ -17,6 +18,7 @@ from app.api.workflows import router as workflows_router
 from app.core.config import Settings, get_settings
 from shared.errors import ApplicationError
 from app.core.logging import configure_logging
+from ai.logging import diagnostic_scope
 from app.db.session import Database
 
 logger = logging.getLogger(__name__)
@@ -38,7 +40,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
     app.state.settings = settings
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
-                       allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+                       allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+                       expose_headers=['X-Request-ID', 'X-Trace-Run-ID'])
     app.include_router(router)
     app.include_router(chat_router)
     app.include_router(dev_workflows_router)
@@ -48,9 +51,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def request_log(request: Request, call_next):
         request_id = str(uuid4())
         request.state.request_id = request_id
+        is_chat_turn = request.method == 'POST' and request.url.path == '/api/v1/chat/messages'
+        trace_run_id = str(uuid4()) if is_chat_turn else None
+        request.state.diagnostic_run_id = trace_run_id
         started = monotonic()
-        response = await call_next(request)
+        with diagnostic_scope(run_id=trace_run_id, request_id=request_id) if is_chat_turn else nullcontext():
+            response = await call_next(request)
         response.headers['X-Request-ID'] = request_id
+        if trace_run_id:
+            response.headers['X-Trace-Run-ID'] = trace_run_id
         route = request.scope.get('route')
         logger.info('http.request request_id=%s method=%s route=%s status=%s duration_ms=%.1f',
                     request_id, request.method, getattr(route, 'path', 'unmatched'),

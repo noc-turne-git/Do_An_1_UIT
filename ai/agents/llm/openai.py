@@ -6,6 +6,7 @@ from openai import (AsyncOpenAI, APIConnectionError, APITimeoutError,
                     APIError, APIStatusError, AuthenticationError, RateLimitError)
 
 from ai.agents.llm import LLMResponse, ToolCall, TransientLLMError, ProviderError
+from ai.logging import log_execution
 
 
 def strict_schema(schema):
@@ -63,6 +64,8 @@ class OpenAILLMAdapter:
                                     for t in request.tools]
             if self.include_encrypted_reasoning:
                 payload['include'] = ['reasoning.encrypted_content']
+            log_execution(step='llm.provider', event_type='llm.provider_request', phase='sent',
+                input={'adapter_request': request.model_dump(mode='json'), 'provider_payload': payload})
             response = await self.client.responses.create(**payload)
         except AuthenticationError as exc:
             raise ProviderError('LLM_AUTHENTICATION_ERROR', diagnostic=_diagnostic(exc)) from None
@@ -84,6 +87,16 @@ class OpenAILLMAdapter:
         if response.status != 'completed':
             raise ProviderError('LLM_INCOMPLETE_RESPONSE')
         output = [item.model_dump(mode='json', exclude_none=True) for item in response.output]
+        usage_object = getattr(response, 'usage', None)
+        usage_payload = (usage_object.model_dump(mode='json') if hasattr(usage_object, 'model_dump') else
+                         {key: getattr(usage_object, key, None)
+                          for key in ('input_tokens', 'output_tokens', 'total_tokens')}
+                         if usage_object is not None else None)
+        log_execution(step='llm.provider', event_type='llm.provider_response', phase='received',
+            result={'model': self.model, 'status': response.status,
+                    'provider_response_id': getattr(response, 'id', None),
+                    'raw_output_items': output,
+                    'usage': usage_payload})
         if len(json.dumps(output).encode()) > request.max_output_bytes:
             raise ProviderError('MAX_OUTPUT_BYTES')
         usage = response.usage
@@ -108,8 +121,9 @@ class OpenAILLMAdapter:
 
 
 def _diagnostic(exc):
-    """Metadata safe to log: no provider message, payload, headers, or credentials."""
+    """Provider error evidence; central logging redacts credentials if present."""
     result = {'exception_type': type(exc).__name__}
+    result['message'] = str(exc)
     status = getattr(exc, 'status_code', None)
     if isinstance(status, int):
         result['status_code'] = status

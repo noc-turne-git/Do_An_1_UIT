@@ -44,7 +44,7 @@ Không ghi đè file environment đang có. Với cài đặt mới, sao chép f
 - Frontend đọc root `.env.local` qua `envDir` trong `frontend/vite.config.ts`: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_API_BASE_URL`.
 - Backend đọc `backend/.env` theo đường dẫn tuyệt đối, không phụ thuộc working directory: `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, CORS và các cấu hình AI.
 - Chat LLM thật: `LLM_PROVIDER=openai`, `OPENAI_API_KEY`, `OPENAI_MODEL`; `OPENAI_BASE_URL` tùy chọn. Không dùng service role key để xác thực access token của người dùng.
-- `AI_LOG_FILE=logs/execution.jsonl` là đường dẫn tương đối với `ai/`. `LOG_MAX_BYTES`, `LOG_BACKUP_COUNT` điều khiển rotation. `LOG_FILE` cũ không còn tạo file Backend.
+- `AI_TRACE_ROOT=logs/conversations` là thư mục trace theo từng hội thoại và từng lượt chạy, tương đối với `ai/`. `DIAGNOSTIC_RETENTION_DAYS` mặc định 30 ngày. `LOG_FILE` cũ không còn tạo file Backend.
 
 Chạy AI độc lập: truyền `AISettings(...)` trực tiếp hoặc đặt environment variables; package AI không tự đọc `.env` của Backend.
 
@@ -84,7 +84,7 @@ Contract wire nằm trong `shared/schemas/`; `shared/contracts.py` là nguồn P
 
 ## Logging và giới hạn hiện tại
 
-Backend chỉ ghi console. AI ghi JSONL trong `ai/logs/` gồm run ID, trip ID (null trước khi tạo Trip), UTC timestamp, bước, trạng thái kết quả và mã lỗi. Log không ghi raw prompt/message/output hoặc exception message của provider; các field nhạy cảm được mask. Log cũ được giữ ở `ai/logs/legacy/` và không đưa lên Git.
+Backend ghi sự kiện vận hành lên console. Trace AI và chat nằm tại `ai/logs/conversations/<conversation_id>/runs/<run_id>/events.jsonl`, gồm trạng thái và quyết định của parser, agent, workflow, LLM, thao tác database và kết quả transaction. Nội dung người dùng và chuỗi tự do được che; response chat trả `X-Trace-Run-ID` để tìm lượt chạy. Không tạo thêm `execution.jsonl` hoặc file audit cũ.
 
 Các production agent/solver còn trống từ repo gốc vẫn là placeholder; Planning Engine và Validator của demo vẫn dùng fixture, Constraint Planner là deterministic implementation. Refactor giữ nguyên business behavior, không bổ sung thuật toán ngoài phạm vi.
 

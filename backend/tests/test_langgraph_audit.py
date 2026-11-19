@@ -1,6 +1,5 @@
 """Executable audit evidence. All scheduling is performed by compiled LangGraph."""
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,9 +18,9 @@ EVIDENCE = {}
 
 
 @pytest.fixture(scope="module", autouse=True)
-def write_evidence():
+def write_evidence(tmp_path_factory):
     yield
-    target = Path(__file__).resolve().parents[2] / "ai/logs/langgraph-audit-traces.json"
+    target = tmp_path_factory.mktemp('langgraph-audit') / 'traces.json'
     target.write_text(json.dumps(EVIDENCE, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

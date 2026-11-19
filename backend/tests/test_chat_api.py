@@ -15,8 +15,8 @@ from ai.orchestration.turns import TurnResult
 from app.db.models import WorkflowRequestRecord, WorkflowArtifactRecord
 
 
-def setup_client():
-    app = create_app(Settings(_env_file=None))
+def setup_client(settings=None):
+    app = create_app(settings or Settings(_env_file=None))
     session = MagicMock()
     session.bind = None
     session.get.return_value = None
@@ -45,8 +45,26 @@ def test_send_creates_conversation_without_trip_and_stores_unicode_message(caplo
     assert not any(isinstance(row, TripRecord) for row in rows)
     assert data['content'] == 'Đi Đà Lạt 3 ngày' and data['role'] == 'user'
     assert response.headers['x-request-id']
+    assert response.headers['x-trace-run-id']
     assert 'chat.message_staged' in caplog.text
     assert data['content'] not in caplog.text
+
+
+def test_chat_turn_trace_uses_response_run_id_and_conversation(tmp_path):
+    import json
+    settings = Settings(_env_file=None, ai_log_file=tmp_path / 'execution.jsonl')
+    app, session, _ = setup_client(settings)
+    turn = TurnResult(empty_request(), 'Welcome!', planning=False)
+    with patch('app.api.chat.run_turn', return_value=turn), TestClient(app) as client:
+        response = client.post('/api/v1/chat/messages', json={'content': 'private trip text'})
+    assert response.status_code == 201
+    trace = (tmp_path / 'conversations' / response.json()['conversation_id'] / 'runs' /
+             response.headers['x-trace-run-id'] / 'events.jsonl')
+    events = [json.loads(line) for line in trace.read_text(encoding='utf-8').splitlines()]
+    assert {'conversation_loaded', 'response_staged'} <= {event['phase'] for event in events}
+    assert {event['run_id'] for event in events} == {response.headers['x-trace-run-id']}
+    assert 'private trip text' not in trace.read_text(encoding='utf-8')
+    assert not (tmp_path / 'execution.jsonl').exists()
 
 
 def test_foreign_or_missing_trip_cannot_send_or_read():

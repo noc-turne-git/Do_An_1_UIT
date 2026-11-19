@@ -10,6 +10,7 @@ from shared.contracts import Model, TripRequest
 from ai.agents.contracts import AgentContext, AgentDefinition, AgentStatus, ExecutionLimits
 from ai.agents.runtime.factory import create_agent_harness
 from ai.orchestration.date_normalization import DATE_PATHS, normalize_trip_dates
+from ai.logging import log_execution
 
 DECISIONS = Literal['UNKNOWN', 'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE', 'DEFERRED', 'SPECIFIED']
 LABELS = {
@@ -160,6 +161,12 @@ async def parse_turn(settings, *, previous, content, history, request_id, conver
             timeout=settings.llm_timeout_seconds * 2 + 2, llm_timeout=settings.llm_timeout_seconds))
     harness = create_agent_harness(definition, settings)
     try:
+        log_execution(run_id=request_id, conversation_id=conversation_id, step='parser.extract',
+            event_type='parser.input', phase='received', input={
+                'content': content, 'conversation_history': history,
+                'previous_request': previous, 'pending_question': pending_question,
+                'workflow_context': workflow_context, 'current_date': user_date,
+                'timezone': timezone_name, 'system_prompt': PROMPT})
         result = await harness.run(definition, AgentContext(request_id=request_id,
             conversation_id=conversation_id, input_data=dict(content=content, history=history,
                 previous_request=previous.model_dump(mode='json'),
@@ -167,6 +174,9 @@ async def parse_turn(settings, *, previous, content, history, request_id, conver
                 trip_request_schema=TripRequest.model_json_schema(),
                 current_date=user_date.isoformat(),
                 timezone=timezone_name)))
+        log_execution(run_id=request_id, conversation_id=conversation_id, step='parser.extract',
+            event_type='parser.agent_output', phase='received',
+            input={'content': content, 'previous_request': previous}, output=result)
         if result.status != AgentStatus.SUCCESS:
             return result_value(None, None, result.error.code if result.error else 'INVALID_PARSER_OUTPUT')
         if result.output.intent != 'trip_planning':
@@ -177,6 +187,10 @@ async def parse_turn(settings, *, previous, content, history, request_id, conver
             return result_value(None, None, 'CONFLICTING_INPUT')
         try:
             request = apply_changes(previous, result.output, current_date=user_date)
+            log_execution(run_id=request_id, conversation_id=conversation_id, step='parser.apply_changes',
+                event_type='parser.transformation', phase='completed',
+                input={'previous_request': previous, 'parser_output': result.output,
+                       'current_date': user_date}, output={'trip_request': request})
         except json.JSONDecodeError:
             return result_value(None, None, 'INVALID_PARSER_JSON')
         except ValidationError:

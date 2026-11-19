@@ -7,8 +7,9 @@ def configure_logging(settings):
     logging.basicConfig(level=settings.log_level,
         format='%(asctime)s %(levelname)s %(name)s %(message)s')
     logging.getLogger('app').setLevel(settings.log_level)
-    configure_ai_logging(settings.ai_log_file, max_bytes=settings.log_max_bytes,
-                         backups=settings.log_backup_count, level=settings.log_level)
+    configure_ai_logging(settings.ai_log_file or settings.ai_trace_root, max_bytes=settings.log_max_bytes,
+                         backups=settings.log_backup_count, level=settings.log_level,
+                         retention_days=settings.diagnostic_retention_days)
 
 def log_message(*, message_id, role, content, conversation_id=None, trip_id=None):
     logging.getLogger('conversation').info(json.dumps(dict(
@@ -16,6 +17,11 @@ def log_message(*, message_id, role, content, conversation_id=None, trip_id=None
         conversation_id=str(conversation_id) if conversation_id else None,
         trip_id=str(trip_id) if trip_id else None)))
 
-def log_parser_turn(*, request_id, conversation_id, message_id, trip_request, error_code, trip_id=None):
-    log_execution(run_id=request_id, trip_id=trip_id, step='chat.parser_turn',
-        result={'status': trip_request.meta.parser_status}, error=error_code)
+def log_parser_turn(*, request_id, conversation_id, message_id, trip_request, error_code,
+                    trip_id=None, run_id=None, workflow_id=None):
+    log_execution(run_id=run_id or request_id, workflow_id=workflow_id, request_id=request_id,
+        conversation_id=conversation_id, trip_id=trip_id, step='chat.parser_turn',
+        event_type='chat.parser', phase='completed', result={
+            'message_id': message_id, 'status': trip_request.meta.parser_status,
+            'missing_fields': trip_request.missing_fields,
+            'parsed_trip_request': trip_request}, error=error_code)

@@ -106,15 +106,26 @@ with `backend/.venv/Scripts/python.exe -m pytest backend/tests -q` from reposito
 
 Console retains HTTP request IDs/status/duration and database status logs.
 Committed messages log identifiers, role and character counts, without bodies.
-Find `"step": "chat.parser_turn"` in ai/logs/execution.jsonl for each parsed turn:
-request_id (also X-Request-ID), conversation_id, message_id, parser_status,
-trip_request, missing_fields, field_decisions and safe error_code. Raw prompts,
-free-text constraints and must_do are omitted; credential-like/contact strings are
-redacted. Older log entries are preserved. Parser events occur before commit;
-console chat.message_committed/chat.message_rolled_back confirm persistence.
-AI_LOG_FILE, LOG_MAX_BYTES and LOG_BACKUP_COUNT configure location/rotation
-(default 5 MiB, 5 backups). Existing older log lines are preserved. Use one backend
-worker per log file. Tokens and API keys must never be logged.
+The trace is `ai/logs/conversations/<conversation_id>/runs/<run_id>/events.jsonl`
+(configured by `AI_TRACE_ROOT`). No aggregate `execution.jsonl` is written.
+A `run_id` is generated for every HTTP chat turn and every direct `run_turn`; its
+`workflow_id`, `trip_id`, and HTTP `request_id` remain separate correlation fields.
+The HTTP response includes `X-Trace-Run-ID`. Read every run folder beneath a
+conversation to reconstruct its history. Standalone runs use the `standalone`
+conversation folder.
+
+Events include chat extraction metadata, graph start/end states, node state
+transitions/outputs, routes, agent decisions, LLM request/response metadata and
+output validation, persistence operations, and transaction outcomes. Raw prompts,
+message bodies, free-text constraints, credentials, and contact-like values are
+redacted with length/fingerprint metadata. Parser events occur before the request
+transaction commits; transaction events record committed or rolled-back outcomes.
+Each run keeps its complete JSONL file until `DIAGNOSTIC_RETENTION_DAYS` (default
+30) expires; old run folders are pruned at startup and at most once daily while
+writing. Each event is bounded to 1 MiB, and oversize events record an explicit
+truncation marker. Legacy `AI_LOG_FILE`, `LOG_MAX_BYTES`, and `LOG_BACKUP_COUNT`
+settings are accepted; only `AI_LOG_FILE` affects the trace directory location.
+Tokens and API keys are never logged.
 Streaming is not implemented. Clients must retain `input_id` across an ambiguous timeout;
 the receipt prevents a duplicate committed turn, workflow or episode.
 
@@ -148,7 +159,9 @@ the failed workflow history and the approved non-destination TripRequest baselin
 Inspect logs from repository root:
 
 ```powershell
-Get-Content ai/logs/execution.jsonl -Tail 100 | Select-String 'chat.parser_turn'
+.\.venv\Scripts\python.exe -m ai.logging --conversation-id <conversation_id>
+.\.venv\Scripts\python.exe -m ai.logging --run-id <run_id>
+Get-Content ai/logs/conversations/<conversation_id>/runs/<run_id>/events.jsonl
 ```
 
 Live smoke test: sign in, send a request, answer questions, then try uncertainty,

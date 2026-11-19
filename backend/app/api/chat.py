@@ -13,6 +13,7 @@ from app.services.conversations import ConversationRepository, ConversationWorkf
 from app.services.trip_summary import summarize_trip, trip_details
 from shared.contracts import TripRequest, AnswerHistory, PendingQuestion, SelectionPolicy
 from ai.interface import empty_request, run_turn, StaleTurn
+from ai.logging import log_execution, update_diagnostic_identity
 from app.services.workflow_factory import get_graph_orchestrator
 from ai.orchestration.turns import check_reference
 from app.core.logging import log_parser_turn
@@ -72,6 +73,10 @@ class ChatTurnView(MessageView):
 async def send_message(body: SendMessage, request: Request, principal: ChatPrincipal = Depends(get_chat_principal),
                  session: Session = Depends(get_session), graph=Depends(get_graph_orchestrator)):
     from zoneinfo import ZoneInfo
+    # Bind an existing conversation before its first database lookup so the
+    # SQL-level trace includes the read/lock that loads it.
+    if body.conversation_id is not None:
+        update_diagnostic_identity(conversation_id=body.conversation_id)
     conversations = ConversationRepository(session, principal)
     # Serialize the same idempotency key even when the first request creates a conversation.
     postgres = session.bind is not None and session.bind.dialect.name == 'postgresql'
@@ -88,7 +93,30 @@ async def send_message(body: SendMessage, request: Request, principal: ChatPrinc
         if receipt.response_payload is not None:
             return ChatTurnView.model_validate(receipt.response_payload)
         raise StaleTurn('Turn checkpoint is pending reconciliation; reload the conversation')
+    is_new_conversation = body.conversation_id is None
     conversation = conversations.get(body.conversation_id, lock=True) if body.conversation_id else conversations.create()
+    update_diagnostic_identity(conversation_id=conversation.conversation_id,
+                               workflow_id=conversation.request_id, trip_id=conversation.trip_id)
+    session.info['diagnostic_identity'] = dict(
+        conversation_id=str(conversation.conversation_id),
+        run_id=request.state.diagnostic_run_id, request_id=request.state.request_id,
+        workflow_id=str(conversation.request_id) if conversation.request_id else None,
+        trip_id=str(conversation.trip_id) if conversation.trip_id else None)
+    if is_new_conversation:
+        # Creation precedes knowledge of its ID, so record the exact durable
+        # result once the ID exists and subsequent events can correlate to it.
+        log_execution(event_type='database.write', phase='flushed', step='chat.conversation',
+            input={'operation': 'create_conversation', 'request_body': body.model_dump(mode='json')},
+            result={'conversation_id': conversation.conversation_id,
+                    'trip_id': conversation.trip_id, 'request_id': conversation.request_id,
+                    'revision': conversation.revision})
+    log_execution(event_type='chat.turn', phase='conversation_loaded', step='chat.send_message',
+        input={'request_body': body.model_dump(mode='json'), 'conversation': {
+            'conversation_id': conversation.conversation_id, 'trip_id': conversation.trip_id,
+            'request_id': conversation.request_id, 'revision': conversation.revision,
+            'trip_request': conversation.trip_request}}, result={'input_id': body.input_id, 'conversation_revision': conversation.revision,
+                'previous_workflow_id': conversation.request_id, 'previous_trip_id': conversation.trip_id,
+                'user_input': body.content, 'is_authenticated': principal.is_authenticated})
     if body.expected_revision is not None and body.expected_revision != (conversation.revision or 0):
         raise StaleTurn('Conversation changed; reload before submitting')
     pending = (session.scalar(select(ConversationTurnRecord).where(
@@ -112,10 +140,19 @@ async def send_message(body: SendMessage, request: Request, principal: ChatPrinc
         MessageRecord.conversation_id == conversation.conversation_id)
         .order_by(MessageRecord.created_at.desc(), MessageRecord.message_id.desc()).limit(12)))
     history = [dict(role=row.role, content=row.content) for row in reversed(rows)]
+    log_execution(event_type='database.read', phase='completed', step='chat.history',
+                  input={'operation': 'recent_messages', 'conversation_id': conversation.conversation_id,
+                         'limit': 12}, result={'operation': 'recent_messages', 'count': len(rows),
+                          'messages': history, 'message_ids': [row.message_id for row in rows]})
     message = MessageRecord(message_id=uuid4(), conversation_id=conversation.conversation_id,
                             role='user', content=body.content, created_at=datetime.now(timezone.utc))
     session.add(message)
     session.flush()
+    log_execution(event_type='database.write', phase='flushed', step='chat.user_message',
+                  input={'operation': 'stage_user_message', 'message': {'message_id': message.message_id,
+                         'conversation_id': message.conversation_id, 'role': message.role,
+                         'content': message.content, 'created_at': message.created_at}}, result={'operation': 'stage_user_message', 'message_id': message.message_id,
+                          'conversation_revision': conversation.revision, 'input_id': body.input_id})
     receipt.message_id = message.message_id
     session.add(receipt)
     conversation.revision = (conversation.revision or 0) + 1
@@ -132,6 +169,17 @@ async def send_message(body: SendMessage, request: Request, principal: ChatPrinc
         current_date=datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).date(),
         workflow_id=body.workflow_id, episode_id=body.episode_id, question_id=body.question_id,
         answer=body.answer, expected_transitions=body.expected_transitions)
+    update_diagnostic_identity(workflow_id=turn.run.state.request_id if turn.run else None,
+                               trip_id=turn.run.state.trip_id if turn.run else None)
+    # The SQLAlchemy dependency commits after this handler returns. Preserve
+    # trace identity in session.info so that commit/rollback remains attached to
+    # this exact run instead of only the long-lived conversation/workflow.
+    session.info['diagnostic_identity'] = dict(
+        conversation_id=str(conversation.conversation_id), run_id=getattr(turn, 'diagnostic_run_id', None)
+        or request.state.diagnostic_run_id,
+        workflow_id=str(turn.run.state.request_id) if turn.run else None,
+        trip_id=str(turn.run.state.trip_id) if turn.run else (str(conversation.trip_id) if conversation.trip_id else None),
+        request_id=request.state.request_id)
     parsed, reply, error = turn.request or previous, turn.reply, turn.error
     if not principal.is_authenticated:
         # Guest chats retain their message history and latest extracted request,
@@ -171,8 +219,18 @@ async def send_message(body: SendMessage, request: Request, principal: ChatPrinc
         selection_policy=SelectionPolicy.model_validate(episode.model_dump(include=set(SelectionPolicy.model_fields))) if episode else None)
     receipt.response_payload = response.model_dump(mode='json')
     session.flush()
+    log_execution(event_type='chat.turn', phase='response_staged', step='chat.send_message', result={
+        'parser_status': response.parser_status, 'workflow_status': response.workflow_status,
+        'error_code': response.error_code, 'revision': response.revision,
+        'assistant_message_id': assistant.message_id, 'summary_message_id': summary.message_id if summary else None,
+        'workflow_id': response.workflow_id, 'episode_id': response.episode_id,
+        'question_ids': [question.question_id for question in response.questions],
+        'response': response, 'assistant_message': MessageView.model_validate(assistant),
+        'summary_message': MessageView.model_validate(summary) if summary else None})
     log_parser_turn(request_id=request.state.request_id, conversation_id=conversation.conversation_id,
-                    message_id=message.message_id, trip_request=parsed, error_code=error, trip_id=conversation.trip_id)
+                    message_id=message.message_id, trip_request=parsed, error_code=error, trip_id=conversation.trip_id,
+                    run_id=getattr(turn, 'diagnostic_run_id', None),
+                    workflow_id=turn.run.state.request_id if turn.run else None)
     return response
 
 @router.get('/conversations/{conversation_id}/messages', response_model=list[MessageView])
