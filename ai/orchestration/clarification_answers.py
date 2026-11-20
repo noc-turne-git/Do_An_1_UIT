@@ -2,7 +2,7 @@
 from copy import deepcopy
 from uuid import uuid4
 
-from shared.contracts import AnswerHistory, TripRequest
+from shared.contracts import AnswerHistory, TRIP_COLLECTION_FIELDS, TripRequest
 
 
 class InvalidAnswer(ValueError):
@@ -65,6 +65,21 @@ def accept_answer(previous, parsed, question, raw, supplied=None):
             if confirmed:
                 data['meta']['field_sources'][path] = 'user'
                 data['meta']['field_confidences'].pop(path, None)
+            if path in TRIP_COLLECTION_FIELDS:
+                if confirmed:
+                    data['meta']['field_decisions'][path] = 'DECLINED' if value is None else 'SPECIFIED'
+                else:
+                    for key in ('field_decisions', 'field_sources', 'field_confidences'):
+                        data['meta'][key].pop(path, None)
+                        if path in before['meta'].get(key, {}):
+                            data['meta'][key][path] = before['meta'][key][path]
+    if supplied:
+        for path in supplied.declared_unknown_fields:
+            if path in TRIP_COLLECTION_FIELDS:
+                write_path(data, path, None)
+                data['meta']['field_decisions'][path] = 'DECLINED'
+                data['meta']['field_sources'][path] = 'user'
+                data['meta']['field_confidences'].pop(path, None)
     protected = ['trip.start_date', 'trip.end_date', 'trip.duration_days', 'trip.arrival',
         'trip.departure', 'travelers.adults', 'travelers.children', 'destination.must_visit',
         'destination.avoid_places', 'must_do', 'additional_constraints', 'daily_preferences',
@@ -73,7 +88,14 @@ def accept_answer(previous, parsed, question, raw, supplied=None):
     for path in protected:
         old = read_path(before, path)
         if old is not None and old != read_path(data, path) and not (
-                proposal and confirmed and path in proposal.fields):
+                proposal and confirmed and path in proposal.fields) and not (
+                question.kind == 'trip_request' and path in TRIP_COLLECTION_FIELDS
+                and data['meta']['field_sources'].get(path) == 'user'
+                and data['meta']['field_decisions'].get(path) in {'DECLINED', 'SPECIFIED'}) and not (
+                question.kind == 'trip_request' and path == 'trip.duration_days'
+                and data['meta']['field_sources'].get(path) == 'inferred'
+                and any(read_path(before, date_path) != read_path(data, date_path)
+                        for date_path in ('trip.start_date', 'trip.end_date'))):
             raise InvalidAnswer('Changing an existing constraint requires the specific confirmed proposal')
     parsed = TripRequest.model_validate(data)
     resolved, unknown = [], []
@@ -82,9 +104,14 @@ def accept_answer(previous, parsed, question, raw, supplied=None):
             value = read_path(data, path)
         except (KeyError, TypeError, IndexError, ValueError):
             continue
-        if value is not None and value != '':
+        if path in TRIP_COLLECTION_FIELDS:
+            if parsed.meta.field_decisions[path] == 'SPECIFIED':
+                resolved.append(path)
+            elif parsed.meta.field_decisions[path] == 'DECLINED':
+                unknown.append(path)
+        elif value is not None and value != '':
             resolved.append(path)
-        elif (parsed.meta.field_decisions.get(path) in {'UNKNOWN', 'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE'}
+        elif (parsed.meta.field_decisions.get(path) in {'UNKNOWN', 'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE', 'DEFERRED'}
               or supplied and path in supplied.declared_unknown_fields
               or path == 'destination.city' and parsed.destination.selection_intent == 'USER_UNKNOWN'):
             unknown.append(path)

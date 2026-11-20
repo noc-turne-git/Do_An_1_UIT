@@ -189,6 +189,9 @@ async def send_message(body: SendMessage, request: Request, principal: ChatPrinc
         reply = ('Mình chưa thể phân tích tin nhắn này. Yêu cầu trước đó vẫn được giữ. '
                  'Bạn vui lòng thử lại nhé.')
     summary_needed = (turn.planning and error is None and parsed.meta.parser_status == 'ready'
+                      and (turn.run is None or turn.run.state.status != 'failed')
+                      and not (turn.run and turn.run.state.status == 'awaiting_relaxation'
+                               and turn.run.errors and '[missing_required_fields]' in turn.run.errors[-1].message)
                       and not parsed.missing_fields
                       and (previous.meta.parser_status != 'ready'
                            or trip_details(previous) != trip_details(parsed)))
@@ -250,6 +253,11 @@ class ConversationView(BaseModel):
     trip_request: dict | None
     active_episode_id: UUID | None = None
     revision: int = 0
+
+    @field_validator('trip_request', mode='before')
+    @classmethod
+    def normalize_trip_request(cls, value):
+        return TripRequest.model_validate(value).model_dump(mode='json') if value is not None else None
 
     @field_validator('revision', mode='before')
     @classmethod

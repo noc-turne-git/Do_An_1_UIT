@@ -90,7 +90,9 @@ def latest_artifact(request_id: UUID, artifact_type: str, user: UUID = Depends(g
         raise HTTPException(404, 'Artifact not found')
     return dict(artifact_id=artifact.artifact_id, request_id=artifact.request_id,
         artifact_type=artifact.artifact_type, parent_artifact_id=artifact.parent_artifact_id,
-        is_latest=artifact.is_latest, schema_version=artifact.schema_version, payload=artifact.payload)
+        is_latest=artifact.is_latest, schema_version=artifact.schema_version,
+        payload=(TripRequest.model_validate(artifact.payload).model_dump(mode='json')
+                 if artifact_type == 'trip_request' else artifact.payload))
 
 
 @router.post('/requests/{request_id}/mock-run', response_model=GraphRun)

@@ -186,6 +186,23 @@ class WorkflowPersistence(OwnedRepository):
             raise ApplicationError("planning_input_inconsistent", "Graph snapshot and request differ")
         if row.active_episode_id:
             self._validate_canonical(run)
+        # Legacy snapshots can still contain questions for decisions now known
+        # to be closed. Retire the entire wording, including grouped questions,
+        # without refunding either counter or changing destination-agent choices.
+        from ai.orchestration.clarification_questions import askable_fields
+        collected = run.outputs.get('request_parser')
+        if collected is not None and run.state.status == 'clarifying' and any(
+                askable_fields(collected, question.kind, question.fields,
+                    constraint_proposal=question.constraint_proposal,
+                    parser=run.state.current_step == 'request_parser') != tuple(question.fields)
+                for question in run.pending_questions):
+            from ai.orchestration.workflow_state import StateMachine
+            if row.active_episode_id:
+                self.supersede_questions(run)
+            StateMachine(run).update(status='parsing', pending_questions=[], pending_fields=[])
+            run.route_provider, run.route_reason = 'request_parser', 'collection_state_migration'
+            self.sync(run)
+            self.save_graph(run)
         log_execution(run_id=request_id, trip_id=row.trip_id, step='persistence.load_graph',
             event_type='database.read', phase='completed', result={'operation': 'graph_snapshot',
                 'workflow_id': request_id, 'status': row.status, 'has_active_episode': bool(row.active_episode_id),

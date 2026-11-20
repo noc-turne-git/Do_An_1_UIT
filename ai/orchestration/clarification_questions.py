@@ -9,7 +9,16 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from shared.contracts import (ConstraintProposal, DestinationResult, PendingQuestion,
-                              QuestionKind, QuestionOption, SelectionIntent)
+                              QuestionKind, QuestionOption, SelectionIntent, TRIP_COLLECTION_FIELDS)
+
+
+def askable_fields(request, kind, fields, *, constraint_proposal=None, parser=False):
+    """Gate collection without changing destination choices or recovery proposals."""
+    if kind == 'destination_choice' or constraint_proposal is not None:
+        return tuple(fields)
+    return tuple(path for path in fields if (
+        not parser and kind != 'trip_request' and path not in TRIP_COLLECTION_FIELDS
+        or request.should_ask(path)))
 
 
 @dataclass(frozen=True)

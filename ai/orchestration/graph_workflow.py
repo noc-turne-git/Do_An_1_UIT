@@ -21,12 +21,12 @@ from shared.errors import ApplicationError
 from ai.agents.runtime.context import execution_identity
 from shared.contracts import (AnswerHistory, Attempt, Model, TripRequest, WorkflowState,
                               DestinationResult, DestinationEpisode, SelectionPolicy, PendingQuestion,
-                              QuestionOption)
+                              QuestionOption, TRIP_COLLECTION_FIELDS)
 from ai.planning.constraint_planner import ConstraintPlanningError
 from ai.orchestration.workflow_state import OUTPUTS, REFS, STEPS, StateMachine, WorkflowRun
 from ai.orchestration.clarification_policy import ClarificationPolicy
 from ai.orchestration.clarification_questions import QuestionSpec
-from ai.orchestration.trip_request_defaults import apply_trip_defaults
+from ai.orchestration.trip_request_defaults import apply_trip_defaults, MissingTripData
 from ai.orchestration.destination_resolution import (ANY_INTENTS, apply_resolved_destination,
     authorize_selection, can_offer_choice, can_select, reject)
 from ai.orchestration.clarification_answers import accept_answer, option_request, InvalidAnswer
@@ -282,6 +282,8 @@ class LangGraphOrchestrator:
                 if step in {"planning_input_builder", "planning_engine", "validator"} and value.trip_id != r.state.trip_id:
                     raise ApplicationError("planning_input_inconsistent", "Trip IDs differ")
                 if step == 'request_parser':
+                    if state.get('previous_request') is not None:
+                        value = value.preserve_answers(state['previous_request'])
                     question = next((q for q in r.pending_questions if q.status == 'open'), None)
                     if question is not None:
                         value, answer = accept_answer(state['previous_request'], value, question,
@@ -293,14 +295,19 @@ class LangGraphOrchestrator:
                             r.selection_question = question.model_copy(deep=True)
                         sm.update(pending_questions=[], pending_fields=[])
                     self._update_episode_policy(r, value)
-                    fields = list(dict.fromkeys([*r.trip_request_fields,
+                    fields = list(dict.fromkeys([*TRIP_COLLECTION_FIELDS, *r.trip_request_fields,
                         *(p for p in value.missing_fields if not p.startswith('destination.')
                           and p not in r.destination_info_fields)]))
                     if fields:
-                        value = apply_trip_defaults(value, [QuestionSpec('trip_request', tuple(fields))],
-                            policy=self.clarification_policy,
-                            exhausted=r.state.clarification_round >= r.state.max_clarification_rounds,
-                            question_open=any(q.status == 'open' for q in r.pending_questions))
+                        try:
+                            value = apply_trip_defaults(value, [QuestionSpec('trip_request', tuple(fields))],
+                                policy=self.clarification_policy,
+                                exhausted=r.state.clarification_round >= r.state.max_clarification_rounds,
+                                question_open=any(q.status == 'open' for q in r.pending_questions))
+                        except ApplicationError:
+                            # Keep the user's latest decisions even if planning cannot proceed.
+                            self._save(r, step, value)
+                            raise
                 if step == 'destination_agent':
                     value = self._destination_selection(r, value)
                 log_transformation(raw, value, component=step,
@@ -350,6 +357,11 @@ class LangGraphOrchestrator:
                 if exc.pending_fields and all(i.code == "missing_required_field" for i in exc.issues):
                     StateMachine(r, self.persistence).clarify(
                         exc.pending_fields, request=r.outputs.get('request_parser'))
+                elif all(i.code in {'missing_required_field', 'unknown_required_value'}
+                         and all(path in TRIP_COLLECTION_FIELDS
+                                 and not r.outputs['request_parser'].should_ask(path) for path in i.fields)
+                         for i in exc.issues):
+                    sm.cannot_plan(list(dict.fromkeys(path for i in exc.issues for path in i.fields)))
                 else:
                     sm.fail(step, exc.code, exc.message)
             except Exception as exc:
@@ -357,7 +369,10 @@ class LangGraphOrchestrator:
                 message = "Output failed Pydantic validation" if isinstance(exc, ValidationError) else exc.message if isinstance(exc, ApplicationError) else f"Module raised {type(exc).__name__}"
                 if step in {"planning_engine", "validator"}:
                     self._attempt(r, "error", [code])
-                sm.fail(step, code, message, getattr(exc, "retryable", False))
+                if isinstance(exc, MissingTripData):
+                    sm.cannot_plan(exc.fields)
+                else:
+                    sm.fail(step, code, message, getattr(exc, "retryable", False))
                 event['exception'] = {'type': type(exc).__name__, 'code': code,
                                       'retryable': bool(getattr(exc, 'retryable', False))}
                 log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
@@ -523,15 +538,20 @@ class LangGraphOrchestrator:
             return  # The last issued question remains actionable at the limit.
         if spec.kind == 'trip_request':
             r.trip_request_fields = list(dict.fromkeys([*r.trip_request_fields, *spec.fields]))
-            if r.state.clarification_round >= r.state.max_clarification_rounds:
+            if (r.state.clarification_round >= r.state.max_clarification_rounds
+                    or any(not request.should_ask(path) for path in spec.fields)):
                 updated = apply_trip_defaults(request, [spec], policy=self.clarification_policy,
-                    exhausted=True, question_open=False)
-                if updated == request:
-                    reject('Trip requirements remain unresolved after applying configured defaults')
-                self._invalidate(r, 'destination_agent')
-                self._save(r, 'request_parser', updated)
-                r.route_provider = 'destination_agent'
-                return
+                    exhausted=r.state.clarification_round >= r.state.max_clarification_rounds,
+                    question_open=False)
+                if updated != request:
+                    self._invalidate(r, 'destination_agent')
+                    self._save(r, 'request_parser', updated)
+                    r.route_provider = 'destination_agent'
+                    return
+                if r.state.clarification_round >= r.state.max_clarification_rounds:
+                    StateMachine(r).fail('destination_agent', 'missing_required_fields',
+                        'Trip requirements remain unresolved: ' + ', '.join(spec.fields))
+                    return
         else:
             if r.state.destination_round >= r.state.max_destination_rounds:
                 reject('Destination question budget exhausted without an authorized selection')
@@ -545,40 +565,42 @@ class LangGraphOrchestrator:
                     reject('Constraint proposal does not match the current request')
         StateMachine(r, self.persistence).issue_question(spec, request=request)
 
-    @staticmethod
-    def _draft_for_fields(fields, question_drafts):
-        """Return LLM wording while keeping the issued field snapshot canonical."""
-        field_set = set(fields)
-        source = next((item for item in question_drafts
-                       if item.get('question') and field_set.intersection(item.get('fields', ()))), None)
-        if source is None:
-            return None
-        return {'fields': list(fields), 'question': source['question']}
-
     def _outcome(self, r, step, value, *, question_drafts=()):
         sm, o = StateMachine(r), r.outputs
-        if step == "request_parser" and any(
-                not field.startswith('destination.') and field not in r.destination_info_fields
-                for field in value.missing_fields):
-            fields = [field for field in value.missing_fields
-                      if not field.startswith('destination.') and field not in r.destination_info_fields]
-            # Only one question can be actionable at a time. Select the first
-            # valid wording from the parser's (up to three) suggestions.
-            source = next((item for item in question_drafts
-                           if set(item.get('fields', ())).intersection(fields)), None)
-            asked_fields = [field for field in fields if source and field in source['fields']] or fields
-            draft = self._draft_for_fields(asked_fields, (source,) if source else ())
+        fields = []
+        if step == 'request_parser':
+            for path in value.missing_fields:
+                if path.startswith('destination.') or path in r.destination_info_fields:
+                    continue
+                # An exhausted collection can plan with an approved default.
+                # Its user decision remains UNASKED and missing_fields stays derived.
+                group, name = path.split('.')
+                if (r.state.clarification_round >= r.state.max_clarification_rounds
+                        and value.meta.field_sources.get(path) == 'default'
+                        and path in self.clarification_policy.default_table
+                        and getattr(getattr(value, group), name) == self.clarification_policy.default_table[path]):
+                    continue
+                fields.append(path)
+        if step == 'request_parser' and fields:
+            from ai.orchestration.request_parser import collection_question
+            draft = collection_question(value, fields=fields, drafts=question_drafts)
+            asked_fields = draft['fields'] if draft else fields
             r.trip_request_fields = list(dict.fromkeys([*r.trip_request_fields, *asked_fields]))
             StateMachine(r, self.persistence).clarify(asked_fields, request=value, draft=draft)
-        elif (step == 'request_parser' and 'destination.city' in value.missing_fields
-              and (value.destination.selection_intent == 'EXPLICIT'
-                   or (value.destination.selection_intent == 'USER_UNKNOWN'
-                       and not value.destination.candidate_cities))):
-            # ``USER_UNKNOWN`` is deliberately not delegation.  Ask the
-            # destination owner for a city when there are no canonical
-            # candidates.  If candidates exist, the resolver issues the
-            # established user-owned choice instead.
-            self._ask_destination(r, QuestionSpec('destination_info', ('destination.city',)), value)
+        elif step == 'request_parser' and any(
+                path.startswith('destination.') for path in value.missing_fields):
+            from ai.orchestration.request_parser import collection_question
+            draft = collection_question(value, fields=[path for path in value.missing_fields
+                if path.startswith('destination.')], drafts=question_drafts)
+            StateMachine(r, self.persistence).clarify(draft['fields'], request=value, draft=draft)
+        elif step == 'request_parser':
+            required = [path for path in ('trip.start_date', 'trip.end_date',
+                                         'travelers.adults', 'travelers.children')
+                        if getattr(getattr(value, path.split('.')[0]), path.split('.')[1]) is None]
+            if required:
+                sm.cannot_plan(required)
+            elif value.travelers.adults + value.travelers.children < 1:
+                sm.fail(step, 'invalid_travelers', 'At least one traveler is required')
         elif step == "destination_agent":
             # _destination_selection may have persisted the selected option or
             # default into request_parser.  Route using that canonical value,
@@ -765,6 +787,10 @@ class LangGraphOrchestrator:
         value = run.outputs.get('request_parser', request)
         if run.pending_questions:
             reply = '\n\n'.join(q.question for q in run.pending_questions)
+        elif (run.state.status in {'failed', 'awaiting_relaxation'} and run.errors
+              and '[missing_required_fields]' in run.errors[-1].message):
+            reply = ('Chưa thể lập lịch trình vì thiếu dữ liệu bắt buộc và chưa có giá trị '
+                     'mặc định phù hợp. Quyết định của bạn đã được giữ lại.')
         elif run.state.status == 'failed':
             reply = 'Không thể hoàn tất yêu cầu này. Bạn có thể gửi một điểm đến mới để bắt đầu yêu cầu mới.'
         else:
@@ -841,8 +867,13 @@ class LangGraphOrchestrator:
                             node = node[int(part)] if isinstance(node, list) else node[part]
                     except (KeyError, IndexError, TypeError, ValueError):
                         continue
-                    if node is not None or data["meta"]["field_sources"].get(path) == "user":
-                        data["meta"]["field_sources"][path] = "user"
+                    decision = data['meta']['field_decisions'].get(path)
+                    if path in TRIP_COLLECTION_FIELDS:
+                        if decision == 'SPECIFIED':
+                            resolved.append(path)
+                        elif decision == 'DECLINED':
+                            unknown.append(path)
+                    elif node is not None or data['meta']['field_sources'].get(path) == 'user':
                         (resolved if node is not None else unknown).append(path)
                 request = TripRequest.model_validate(data)
                 if previous.pending_questions:

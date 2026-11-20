@@ -8,8 +8,8 @@ from ai.orchestration.clarification_policy import (
 
 class AISettings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
-    graph_max_clarifications: int = Field(default=3, ge=0)
-    max_destination_rounds: int = Field(default=2, ge=2, le=2)
+    graph_max_clarifications: int = Field(default=10, ge=0)
+    max_destination_rounds: int = Field(default=10, ge=0, le=10)
     clarification_defaults: TripRequestDefaults = Field(default_factory=TripRequestDefaults)
     clarification_preference_defaults: ApprovedPreferenceDefaults | None = None
     graph_max_revisions: int = Field(default=8, ge=0)

@@ -98,6 +98,11 @@ def normalize_trip_dates(previous: TripRequest, updates: Mapping[str, object], *
     start, end, duration = old.start_date, old.end_date, old.duration_days
     provided = {path for path, value in updates.items() if value is not None}
     blocked = {path for path, value in updates.items() if value is None}
+    # Do not recreate a withdrawn date from an old duration on a later turn.
+    # A new duration is fresh user information and may resolve that date.
+    blocked.update(path for path in ('trip.start_date', 'trip.end_date')
+                   if previous.meta.field_decisions.get(path) == 'DECLINED'
+                   and path not in updates and 'trip.duration_days' not in updates)
     issues: list[DateIssue] = []
     derived: set[str] = set()
 

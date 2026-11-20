@@ -484,15 +484,104 @@
         },
         "field_decisions": {
           "additionalProperties": {
-            "enum": [
-              "UNKNOWN",
-              "FLEXIBLE",
-              "AI_DECIDE",
-              "NO_PREFERENCE",
-              "DEFERRED",
-              "SPECIFIED"
-            ],
-            "type": "string"
+            "anyOf": [
+              {
+                "enum": [
+                  "UNASKED",
+                  "DECLINED",
+                  "SPECIFIED"
+                ],
+                "type": "string"
+              },
+              {
+                "enum": [
+                  "UNKNOWN",
+                  "FLEXIBLE",
+                  "AI_DECIDE",
+                  "NO_PREFERENCE",
+                  "DEFERRED",
+                  "SPECIFIED"
+                ],
+                "type": "string"
+              }
+            ]
+          },
+          "patternProperties": {
+            "^destination\\.": {
+              "enum": [
+                "UNKNOWN",
+                "FLEXIBLE",
+                "AI_DECIDE",
+                "NO_PREFERENCE",
+                "DEFERRED",
+                "SPECIFIED"
+              ]
+            }
+          },
+          "properties": {
+            "trip.start_date": {
+              "enum": [
+                "UNASKED",
+                "DECLINED",
+                "SPECIFIED"
+              ]
+            },
+            "trip.end_date": {
+              "enum": [
+                "UNASKED",
+                "DECLINED",
+                "SPECIFIED"
+              ]
+            },
+            "travelers.adults": {
+              "enum": [
+                "UNASKED",
+                "DECLINED",
+                "SPECIFIED"
+              ]
+            },
+            "travelers.children": {
+              "enum": [
+                "UNASKED",
+                "DECLINED",
+                "SPECIFIED"
+              ]
+            },
+            "budget.amount": {
+              "enum": [
+                "UNASKED",
+                "DECLINED",
+                "SPECIFIED"
+              ]
+            },
+            "budget.scope": {
+              "enum": [
+                "UNASKED",
+                "DECLINED",
+                "SPECIFIED"
+              ]
+            },
+            "preferences.interests": {
+              "enum": [
+                "UNASKED",
+                "DECLINED",
+                "SPECIFIED"
+              ]
+            },
+            "preferences.pace": {
+              "enum": [
+                "UNASKED",
+                "DECLINED",
+                "SPECIFIED"
+              ]
+            },
+            "preferences.transport_modes": {
+              "enum": [
+                "UNASKED",
+                "DECLINED",
+                "SPECIFIED"
+              ]
+            }
           },
           "title": "Field Decisions",
           "type": "object"

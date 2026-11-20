@@ -8,6 +8,10 @@ def trip_details(request: TripRequest) -> dict:
 
 def summarize_trip(request: TripRequest) -> str:
     def value(path, item):
+        if request.meta.field_decisions.get(path) == 'DECLINED':
+            if request.meta.field_sources.get(path) == 'default' and item is not None:
+                return str(item) + ' (mặc định)'
+            return 'Chưa xác định (bạn đã chọn không cung cấp)'
         if item is not None:
             return str(item)
         return {'AI_DECIDE': 'Để AI đề xuất', 'FLEXIBLE': 'Linh hoạt',
@@ -15,7 +19,7 @@ def summarize_trip(request: TripRequest) -> str:
                     request.meta.field_decisions.get(path), 'Chưa xác định')
 
     def items(path, values):
-        return ', '.join(values) if values else value(path, None)
+        return value(path, ', '.join(values) if values else 'Không có') if values is not None else value(path, None)
 
     def date_value(path, day):
         return day.strftime('%d/%m/%Y') if day else value(path, None)
@@ -23,11 +27,11 @@ def summarize_trip(request: TripRequest) -> str:
     destination = request.destination
     budget = request.budget
     preferences = request.preferences
-    lines = ['Mình đã có đủ thông tin. Đây là tóm tắt chuyến đi của bạn:',
+    lines = ['Mình đã ghi nhận yêu cầu. Đây là tóm tắt chuyến đi của bạn:',
         f"• Điểm đến: {value('destination.city', destination.city or destination.province or destination.country)}.",
         f"• Thời gian: {date_value('trip.start_date', request.trip.start_date)} – {date_value('trip.end_date', request.trip.end_date)}"
         + (f' ({request.trip.duration_days} ngày).' if request.trip.duration_days else '.'),
-        f'• Thành viên: {request.travelers.adults} người lớn, {request.travelers.children} trẻ em.',
+        f"• Thành viên: {value('travelers.adults', request.travelers.adults)} người lớn, {value('travelers.children', request.travelers.children)} trẻ em.",
         f"• Ngân sách: {format(budget.amount, ',').replace(',', '.' ) + ' ' + budget.currency if budget.amount is not None else value('budget.amount', None)}; phạm vi: {value('budget.scope', budget.scope)}.",
         f"• Sở thích: {items('preferences.interests', preferences.interests)}.",
         f"• Nhịp độ: {value('preferences.pace', preferences.pace)}.",

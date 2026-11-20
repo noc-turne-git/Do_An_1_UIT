@@ -71,9 +71,31 @@ class StateMachine:
                         "solver_error" if step == "planning_engine" else "planning_input_inconsistent"),
                         message=f"[{code}] {message}", retryable=retryable)])
 
+    def cannot_plan(self, fields):
+        """Stop without asking again; a later voluntary edit can resume this run."""
+        self.update(status='awaiting_relaxation', pending_questions=[], pending_fields=[],
+            errors=[*self.run.errors, WorkflowError(step=self.run.state.current_step,
+                code='planning_input_inconsistent', retryable=False,
+                message='[missing_required_fields] No authorized value/default for: ' + ', '.join(fields))])
+
     def issue_question(self, spec, *, request=None, draft=None, question_id=None):
         """The sole workflow transition that can consume a clarification slot."""
-        from ai.orchestration.clarification_questions import prepare_question
+        from ai.orchestration.clarification_questions import askable_fields, prepare_question, QuestionSpec
+
+        if request is not None and not spec.constraint_proposal and spec.kind != 'destination_choice':
+            fields = askable_fields(request, spec.kind, spec.fields,
+                                    parser=self.run.state.current_step == 'request_parser')
+            if not fields:
+                self.cannot_plan(spec.fields)
+                return None
+            if fields != spec.fields:
+                spec = QuestionSpec(spec.kind, fields)
+                draft = None  # Original wording might re-ask a closed companion field.
+            if spec.kind == 'trip_request':
+                from ai.orchestration.request_parser import collection_question
+                draft = collection_question(request, fields=fields, drafts=[draft] if draft else ())
+                if draft is not None:
+                    spec = QuestionSpec(spec.kind, tuple(draft['fields']))
 
         question = prepare_question(spec, draft=draft)
         if self.persistence is not None:
@@ -92,9 +114,17 @@ class StateMachine:
         return question
 
     def clarify(self, fields, *, request=None, draft=None):
-        from ai.orchestration.clarification_questions import QuestionSpec
+        from ai.orchestration.clarification_questions import askable_fields, QuestionSpec
 
         fields = tuple(dict.fromkeys(fields))
+        if request is not None:
+            askable = askable_fields(request, 'trip_request', fields)
+            if not askable:
+                self.cannot_plan(fields)
+                return
+            if askable != fields:
+                draft = None
+            fields = askable
         if self.run.state.clarification_round >= self.run.state.max_clarification_rounds:
             self.fail(self.run.state.current_step, 'missing_required_fields',
                       'No configured default for: ' + ', '.join(fields))

@@ -2,6 +2,7 @@
 
 These models validate data shape, not the 14 business rules of the future Validator.
 """
+from copy import deepcopy
 from datetime import date
 from uuid import UUID
 from typing import Annotated, Generic, Literal, TypeVar
@@ -34,12 +35,16 @@ QuestionKind = Literal["trip_request", "destination_info", "destination_choice"]
 PositiveInt = Annotated[StrictInt, Field(gt=0)]
 NonEmpty = Annotated[str, Field(min_length=1, pattern=r"\S")]
 TRIP_NEVER_DEFAULT = frozenset({'trip.start_date', 'trip.end_date', 'travelers.adults'})
-# A field may deliberately remain null when the user has explicitly declined to
-# constrain it.  Such a decision closes collection for this field; it is not
-# the same as UNKNOWN, which means we still need an answer or a delegation.
-FIELD_DECISIONS_THAT_CLOSE_COLLECTION = frozenset({
-    'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE', 'DEFERRED',
-})
+TRIP_COLLECTION_FIELDS = (
+    'trip.start_date', 'trip.end_date', 'travelers.adults', 'travelers.children',
+    'budget.amount', 'budget.scope', 'preferences.interests', 'preferences.pace',
+    'preferences.transport_modes',
+)
+TripFieldState = Literal['UNASKED', 'DECLINED', 'SPECIFIED']
+DestinationFieldDecision = Literal['UNKNOWN', 'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE',
+                                   'DEFERRED', 'SPECIFIED']
+LEGACY_DECLINED_DECISIONS = frozenset({'UNKNOWN', 'FLEXIBLE', 'AI_DECIDE',
+                                      'NO_PREFERENCE', 'DEFERRED'})
 
 
 class SelectionProvenance(Model):
@@ -187,8 +192,27 @@ class RequestMeta(Model):
     raw_prompt: str
     field_sources: dict[str, Literal["user", "default", "inferred"]]
     field_confidences: dict[str, Confidence]
-    field_decisions: dict[str, Literal["UNKNOWN", "FLEXIBLE", "AI_DECIDE", "NO_PREFERENCE", "DEFERRED", "SPECIFIED"]] = Field(default_factory=dict)
+    field_decisions: dict[str, TripFieldState | DestinationFieldDecision] = Field(
+        default_factory=dict, json_schema_extra={
+            'properties': {path: {'enum': ['UNASKED', 'DECLINED', 'SPECIFIED']}
+                           for path in TRIP_COLLECTION_FIELDS},
+            'patternProperties': {r'^destination\.': {'enum': [
+                'UNKNOWN', 'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE', 'DEFERRED', 'SPECIFIED']}},
+        })
     parser_status: Literal["clarifying", "ready", "error"] | None = None
+
+    @field_validator('field_decisions', mode='before')
+    @classmethod
+    def normalize_decisions(cls, value):
+        if not isinstance(value, dict):
+            return value
+        decisions = dict(value)
+        for path, decision in decisions.items():
+            if path in TRIP_COLLECTION_FIELDS and decision in LEGACY_DECLINED_DECISIONS:
+                decisions[path] = 'DECLINED'
+            elif path not in TRIP_COLLECTION_FIELDS and decision in {'UNASKED', 'DECLINED'}:
+                raise ValueError(f'Trip collection state is not applicable to {path}')
+        return decisions
 
     @model_serializer(mode='wrap')
     def compatible_payload(self, handler):
@@ -220,6 +244,72 @@ class TripRequest(Contract):
     meta: RequestMeta
     missing_fields: list[str]
 
+    @model_validator(mode='before')
+    @classmethod
+    def clear_declined_values(cls, value):
+        if not isinstance(value, dict) or 'meta' not in value:
+            return value
+        data = deepcopy(value)
+        meta = RequestMeta.model_validate(data['meta'])
+        data['meta'] = meta
+        for path in TRIP_COLLECTION_FIELDS:
+            if (meta.field_decisions.get(path) == 'DECLINED'
+                    and meta.field_sources.get(path) != 'default'):
+                group, name = path.split('.')
+                if group in data:
+                    if isinstance(data[group], BaseModel):
+                        data[group] = data[group].model_dump()
+                    data[group][name] = None
+                meta.field_confidences.pop(path, None)
+        return data
+
+    def should_ask(self, path: str) -> bool:
+        """Collection eligibility; executable planning data is checked separately."""
+        if path in TRIP_COLLECTION_FIELDS:
+            return self.meta.field_decisions[path] == 'UNASKED'
+        if path.startswith('destination.'):
+            destination = self.destination
+            answered = (destination.selection_intent != 'UNSPECIFIED'
+                or destination.selection_provenance is not None
+                or any(key in self.meta.field_decisions for key in (
+                    'destination.city', 'destination.selection_mode', 'destination.selection_intent'))
+                or (destination.city is not None and bool(destination.city.strip())
+                    and self.meta.field_sources.get('destination.city') != 'default')
+                or self.meta.field_sources.get('destination.selection_mode') == 'user')
+            return not answered
+        return self.meta.field_decisions.get(path) in {None, 'UNKNOWN'}
+
+    def preserve_answers(self, previous: 'TripRequest') -> 'TripRequest':
+        """A partial parser/API payload cannot reset already collected decisions."""
+        data = self.model_dump(mode='json')
+        old = previous.model_dump(mode='json')
+        restored = False
+        for path in TRIP_COLLECTION_FIELDS:
+            if self.should_ask(path) and not previous.should_ask(path):
+                group, name = path.split('.')
+                data[group][name] = old[group][name]
+                for key in ('field_decisions', 'field_sources', 'field_confidences'):
+                    data['meta'][key].pop(path, None)
+                    if path in old['meta'].get(key, {}):
+                        data['meta'][key][path] = old['meta'][key][path]
+                restored = True
+        if self.should_ask('destination.selection_mode') and not previous.should_ask('destination.selection_mode'):
+            data['destination'] = old['destination']
+            for key in ('field_decisions', 'field_sources', 'field_confidences'):
+                data['meta'][key] = {path: decision for path, decision in data['meta'][key].items()
+                                     if not path.startswith('destination.')}
+                data['meta'][key].update({path: decision for path, decision in old['meta'].get(key, {}).items()
+                                          if path.startswith('destination.')})
+            restored = True
+        if restored:
+            start, end = data['trip']['start_date'], data['trip']['end_date']
+            duration_changed = (data['trip']['duration_days'] != old['trip']['duration_days']
+                                and data['meta']['field_sources'].get('trip.duration_days') == 'user')
+            if start is not None and end is not None and not duration_changed:
+                data['trip']['duration_days'] = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+            return type(self).model_validate(data)
+        return self
+
     @model_validator(mode="after")
     def daily_days(self):
         days = [p.day for p in self.daily_preferences]
@@ -230,44 +320,25 @@ class TripRequest(Contract):
             duration = (self.trip.end_date - self.trip.start_date).days + 1
         if duration is not None and any(day > duration for day in days):
             raise ValueError("daily_preferences day outside trip")
+        # Migrate legacy records from confirmed user values only. Technical
+        # defaults and guesses do not constitute a user answer.
+        for path in TRIP_COLLECTION_FIELDS:
+            group, name = path.split('.')
+            value = getattr(getattr(self, group), name)
+            valid = value is not None and not (isinstance(value, str) and not value.strip())
+            source = self.meta.field_sources.get(path)
+            decision = self.meta.field_decisions.get(path)
+            if decision is None:
+                decision = 'SPECIFIED' if valid and source == 'user' else 'UNASKED'
+            elif decision == 'SPECIFIED' and (not valid or source == 'default'):
+                decision = 'UNASKED'
+            self.meta.field_decisions[path] = decision
         # Derived data, never trust a stale parser-provided list.
-        required = {
-            "destination.selection_mode": self.destination.selection_mode,
-            "trip.start_date": self.trip.start_date,
-            "trip.end_date": self.trip.end_date,
-            "travelers.adults": self.travelers.adults,
-            "travelers.children": self.travelers.children,
-            "preferences.interests": self.preferences.interests,
-            "preferences.pace": self.preferences.pace,
-            "preferences.transport_modes": self.preferences.transport_modes,
-            "budget.amount": self.budget.amount,
-            "budget.scope": self.budget.scope,
-        }
-        if self.destination.selection_mode == "explicit":
-            required["destination.city"] = self.destination.city
-        elif self.destination.selection_intent == 'USER_UNKNOWN':
-            required['destination.city'] = self.destination.city
-        def unresolved(path, value):
-            if value is None or (isinstance(value, str) and not value.strip()):
-                return True
-            # Empty collections are valid explicit preferences (for example,
-            # "không có sở thích").  They are unresolved only when the parser
-            # recorded UNKNOWN rather than an affirmative user decision.
-            return (self.meta.field_decisions.get(path) == 'UNKNOWN'
-                    and isinstance(value, (list, dict)) and not value)
-        self.missing_fields = [path for path, value in required.items()
-            if unresolved(path, value) and (
-                # Destination has its own policy state machine.  An explicit
-                # city and USER_UNKNOWN require an answer; ANY_DESTINATION
-                # and DELEGATE_SELECTION are resolved by the destination flow.
-                path.startswith('destination.') or
-                # Elsewhere, only an absent decision or UNKNOWN remains an
-                # actionable clarification.  A user-confirmed refusal,
-                # flexibility, or delegation must never be asked again.
-                self.meta.field_decisions.get(path) not in FIELD_DECISIONS_THAT_CLOSE_COLLECTION
-            )]
-        if self.travelers.adults == 0 and self.travelers.children == 0:
-            self.missing_fields.append('travelers.adults')
+        self.missing_fields = [path for path in TRIP_COLLECTION_FIELDS if self.should_ask(path)]
+        if self.should_ask('destination.selection_mode'):
+            self.missing_fields.insert(0, 'destination.selection_mode')
+        if self.meta.parser_status != 'error':
+            self.meta.parser_status = 'clarifying' if self.missing_fields else 'ready'
         return self
 
 

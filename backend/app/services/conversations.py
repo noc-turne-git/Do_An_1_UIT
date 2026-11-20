@@ -13,13 +13,9 @@ from app.repositories.artifacts import ArtifactRepository
 def require_ready(value: TripRequest) -> TripRequest:
     # Revalidate even Python callers; never trust model_construct or stale flags.
     request = TripRequest.model_validate(value.model_dump(mode='json'))
-    required = [request.destination.selection_mode, request.trip.start_date,
-                request.trip.end_date, request.travelers.adults, request.travelers.children,
-                request.preferences.interests, request.preferences.pace,
-                request.preferences.transport_modes, request.budget.amount, request.budget.scope]
-    if request.destination.selection_mode == 'explicit':
-        required.append(request.destination.city)
-    if request.missing_fields or any(v is None or (isinstance(v, str) and not v.strip()) for v in required):
+    required = [request.trip.start_date, request.trip.end_date,
+                request.travelers.adults, request.travelers.children]
+    if request.missing_fields or any(v is None for v in required):
         raise ApplicationError('incomplete_trip_request', 'TripRequest is missing required information')
     if request.travelers.adults + request.travelers.children < 1:
         raise ApplicationError('incomplete_trip_request', 'At least one traveler is required')

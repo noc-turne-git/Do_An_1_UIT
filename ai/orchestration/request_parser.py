@@ -6,13 +6,15 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import Field, ValidationError
-from shared.contracts import Model, TripRequest
+from shared.contracts import (DestinationFieldDecision, LEGACY_DECLINED_DECISIONS, Model,
+                              TRIP_COLLECTION_FIELDS, TripFieldState, TripRequest)
 from ai.agents.contracts import AgentContext, AgentDefinition, AgentStatus, ExecutionLimits
 from ai.agents.runtime.factory import create_agent_harness
 from ai.orchestration.date_normalization import DATE_PATHS, normalize_trip_dates
 from ai.logging import log_execution
 
-DECISIONS = Literal['UNKNOWN', 'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE', 'DEFERRED', 'SPECIFIED']
+DECISIONS = TripFieldState | DestinationFieldDecision
+ACKNOWLEDGEMENT = 'Mình đã ghi nhận yêu cầu chuyến đi của bạn.'
 LABELS = {
     'destination.selection_mode': 'Bạn muốn đi đâu, hay muốn AI chọn điểm đến?',
     'destination.city': 'Bạn muốn đến thành phố nào?',
@@ -26,9 +28,6 @@ LABELS = {
     'preferences.pace': 'Bạn thích đi thư thả hay dày hoạt động?',
     'preferences.transport_modes': 'Bạn muốn di chuyển bằng gì, hay để AI chọn?',
 }
-DELEGABLE = {'destination.selection_mode', 'destination.city', 'trip.start_date', 'trip.end_date',
-             'budget.amount', 'budget.scope', 'preferences.interests', 'preferences.pace',
-             'preferences.transport_modes'}
 DESTINATION_SELECTION_PATHS = frozenset({'destination.selection_mode', 'destination.city'})
 NON_NULL_COLLECTION_FIELDS = frozenset({
     'destination.candidate_cities', 'destination.preferred_areas', 'destination.must_visit',
@@ -92,13 +91,26 @@ def apply_changes(previous, output, *, current_date=None):
         if parts[-1] not in node:
             raise ValueError('Unknown parser path')
         value = json.loads(change.value_json)
-        if change.decision != 'SPECIFIED' and value is not None:
+        decision = change.decision
+        if decision == 'UNASKED':
+            # A failed extraction or omitted answer is not a new user decision.
+            if value is not None:
+                raise ValueError('UNASKED cannot supply a value')
+            continue
+        if change.path in TRIP_COLLECTION_FIELDS and decision in LEGACY_DECLINED_DECISIONS:
+            decision = 'DECLINED'
+        if change.path.startswith('destination.') and decision == 'DECLINED':
+            raise ValueError('Destination retains its own decision vocabulary')
+        if decision != 'SPECIFIED' and value is not None:
             raise ValueError('Undecided fields cannot contain invented values')
+        if decision == 'SPECIFIED' and change.path in TRIP_COLLECTION_FIELDS and (
+                value is None or isinstance(value, str) and not value.strip()):
+            raise ValueError('SPECIFIED requires a valid value')
         # Deferring a destination-selection answer is intentionally a no-op for
         # the current selection state.  In particular, do not erase an existing
         # selection_mode merely because the user wants to settle it later.
         preserve_destination_selection = (
-            change.path in DESTINATION_SELECTION_PATHS and change.decision == 'DEFERRED'
+            change.path in DESTINATION_SELECTION_PATHS and decision == 'DEFERRED'
         )
         if change.path in DATE_PATHS:
             date_updates[change.path] = value
@@ -106,14 +118,26 @@ def apply_changes(previous, output, *, current_date=None):
         # are not nullable, so retain their current list while recording a
         # non-specific decision in metadata.
         elif not preserve_destination_selection and not (
-                change.path in NON_NULL_COLLECTION_FIELDS and change.decision != 'SPECIFIED' and value is None):
+                change.path in NON_NULL_COLLECTION_FIELDS and decision != 'SPECIFIED' and value is None):
             node[parts[-1]] = value
         if change.path in DESTINATION_SELECTION_PATHS:
-            destination_changes[change.path] = (change.decision, value)
-        payload['meta']['field_decisions'][change.path] = change.decision
+            destination_changes[change.path] = (decision, value)
+        payload['meta']['field_decisions'][change.path] = decision
         payload['meta']['field_sources'][change.path] = 'user'
         payload['meta']['field_confidences'].pop(change.path, None)
     normalized = normalize_trip_dates(previous, date_updates, current_date=current_date)
+    # An unresolved date expression cannot erase an established answer/refusal.
+    ambiguous = {path for issue in normalized.issues if issue.reason == 'ambiguous'
+                 for path in issue.fields}
+    preserved = {path for path in ambiguous if not previous.should_ask(path)}
+    if preserved:
+        for path in preserved:
+            date_updates.pop(path, None)
+            for key in ('field_decisions', 'field_sources', 'field_confidences'):
+                payload['meta'][key].pop(path, None)
+                if path in getattr(previous.meta, key):
+                    payload['meta'][key][path] = getattr(previous.meta, key)[path]
+        normalized = normalize_trip_dates(previous, date_updates, current_date=current_date)
     if normalized.conflicting:
         raise ValidationError.from_exception_data('TripRequest', [{
             'type': 'value_error', 'loc': ('trip',), 'input': payload['trip'],
@@ -123,7 +147,8 @@ def apply_changes(previous, output, *, current_date=None):
     for issue in normalized.issues:
         if issue.reason == 'ambiguous':
             for path in issue.fields:
-                payload['meta']['field_decisions'][path] = 'UNKNOWN'
+                payload['meta']['field_decisions'][path] = 'UNASKED'
+                payload['meta']['field_sources'].pop(path, None)
     for path in normalized.derived_fields:
         payload['meta']['field_sources'][path] = 'inferred'
         payload['meta']['field_confidences'][path] = 1.0
@@ -171,24 +196,38 @@ def apply_changes(previous, output, *, current_date=None):
 
 
 def applicable_followups(request, followups):
-    """Keep at most three LLM questions relevant to still-missing fields.
-
-    A model can include a compatible companion field (for example
-    ``trip.duration_days`` alongside start/end dates).  The workflow narrows
-    the field snapshot later; rejecting that wording here would discard a
-    perfectly usable question.
-    """
+    """Accept wording only when every assigned field can still be asked."""
     questions, covered = [], set()
     for followup in followups:
-        relevant_fields = set(followup.fields).intersection(request.missing_fields)
-        if (relevant_fields and not covered.intersection(relevant_fields)
-                and not all(request.meta.field_decisions.get(path) == 'DEFERRED'
-                            and path in DELEGABLE for path in relevant_fields)):
+        fields = set(followup.fields)
+        if (fields and fields <= set(request.missing_fields)
+                and all(request.should_ask(path) for path in fields)
+                and not covered.intersection(fields)):
             questions.append(followup)
-            covered.update(relevant_fields)
+            covered.update(fields)
             if len(questions) == 3:
                 break
     return questions
+
+
+def collection_question(request, *, fields=None, drafts=()):
+    """One state-checked draft or one deterministic LABELS question."""
+    allowed = set(request.missing_fields if fields is None else fields)
+    candidates = []
+    for draft in drafts:
+        try:
+            candidate = FollowUp.model_validate(draft)
+        except (ValidationError, TypeError, ValueError):
+            continue
+        if set(candidate.fields) <= allowed:
+            candidates.append(candidate)
+    followups = applicable_followups(request, candidates)
+    if followups:
+        return followups[0].model_dump()
+    for path in request.missing_fields:
+        if path in allowed and path in LABELS and request.should_ask(path):
+            return dict(fields=[path], question=LABELS[path])
+    return None
 
 
 async def parse_turn(settings, *, previous, content, history, request_id, conversation_id,
@@ -242,29 +281,15 @@ async def parse_turn(settings, *, previous, content, history, request_id, conver
             return result_value(None, None, 'INVALID_PARSER_CHANGE')
         if extraction_only:
             request.meta.raw_prompt = content
-            return ParsedTurn(request, result.output.summary,
+            return ParsedTurn(request, ACKNOWLEDGEMENT,
                               question_drafts=[question.model_dump() for question in
                                                applicable_followups(request, result.output.questions)])
         # Ask one actionable question per turn.  Remaining LLM questions are
         # alternatives, not text to concatenate into the reply.
-        followups = applicable_followups(request, result.output.questions)
-        questions = [followups[0].question] if followups else []
-        covered = set(followups[0].fields) if followups else set()
-        for path in request.missing_fields:
-            if questions:
-                break
-            if path in covered:
-                continue
-            decision = request.meta.field_decisions.get(path)
-            prefix = 'Nếu chưa biết, bạn có muốn AI đề xuất không? ' if decision == 'UNKNOWN' and path in DELEGABLE else ''
-            if decision == 'DEFERRED' and path in DELEGABLE:
-                continue
-            questions.append(prefix + LABELS[path])
-        if request.missing_fields and not questions:
-            questions.append('Các thông tin để sau vẫn chưa chốt. Khi sẵn sàng, bạn có thể bổ sung hoặc cho phép AI quyết định nhé.')
+        question = collection_question(request, drafts=[q.model_dump() for q in result.output.questions])
         # Only ask for missing requirements; the API sends a separate full
         # trip summary once the collected request is ready.
-        reply = questions[0] if request.missing_fields else result.output.summary
+        reply = question['question'] if question else ACKNOWLEDGEMENT
         return request, reply, None
     finally:
         close = getattr(harness.llm, 'aclose', None)
