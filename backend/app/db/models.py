@@ -61,6 +61,7 @@ class ConversationRecord(Base):
     trip_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('trips.trip_id', ondelete='SET NULL'), nullable=True, unique=True)
     request_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('workflow_requests.request_id', ondelete='SET NULL'), nullable=True)
     trip_request: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    guest_graph_snapshot: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     active_episode_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     revision: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('0'))
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False)
@@ -114,6 +115,12 @@ class MessageRecord(Base):
 
     trip: Mapped["TripRecord"] = relationship(foreign_keys=[trip_id])
 
+def configured_destination_rounds():
+    # Application configuration owns this value; SQL stores the supplied policy.
+    from app.core.config import get_settings
+    return get_settings().max_destination_rounds
+
+
 class WorkflowRequestRecord(Base):
     __tablename__ = "workflow_requests"
     request_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, nullable=False, server_default=sa.text('gen_random_uuid()'))
@@ -124,7 +131,7 @@ class WorkflowRequestRecord(Base):
     clarification_round: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('0'))
     max_clarification_rounds: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('3'))
     destination_round: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('0'))
-    max_destination_rounds: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('2'))
+    max_destination_rounds: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=configured_destination_rounds)
     retry_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('0'))
     graph_snapshot: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     active_episode_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
@@ -134,7 +141,7 @@ class WorkflowRequestRecord(Base):
         sa.UniqueConstraint('request_id', 'trip_id'),
         sa.ForeignKeyConstraint(['request_id', 'active_episode_id'],
             ['destination_episodes.request_id', 'destination_episodes.episode_id'], name='workflow_active_episode_fk', use_alter=True),
-        sa.CheckConstraint('max_destination_rounds >= 0 AND destination_round <= max_destination_rounds',
+        sa.CheckConstraint('max_destination_rounds >= 0 AND destination_round >= 0',
                            name='workflow_requests_destination_round_limit_check'),
         sa.Index('workflow_requests_trip_idx', 'trip_id'),
     )
@@ -148,7 +155,7 @@ class DestinationEpisodeRecord(Base):
     request_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), sa.ForeignKey('workflow_requests.request_id', ondelete='CASCADE'), nullable=False)
     status: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=sa.text("'active'"))
     destination_round: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('0'))
-    max_destination_rounds: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text('2'))
+    max_destination_rounds: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=configured_destination_rounds)
     selection_policy: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
     final_resolve_status: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=sa.text("'not_started'"))
     final_resolve_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True, unique=True)

@@ -16,7 +16,7 @@ def approved():
 
 def test_default_policy_is_incomplete_without_owner_preferences():
     policy = get_clarification_policy(AISettings(_env_file=None))
-    assert policy.max_clarification_rounds == 3 and policy.max_destination_rounds == 2
+    assert policy.max_clarification_rounds == 10 and policy.max_destination_rounds == 10
     assert policy.unconfigured_defaults == PREFERENCE_FIELDS
     assert policy.default_table == {'travelers.children': 0}
     assert not NEVER_DEFAULT.intersection(policy.default_table)
@@ -26,8 +26,8 @@ def test_default_policy_is_incomplete_without_owner_preferences():
 
 @pytest.mark.parametrize('kind,counter,limit', [
     ('trip_request', 'clarification_round', 3),
-    ('destination_choice', 'destination_round', 2),
-    ('destination_info', 'destination_round', 2),
+    ('destination_choice', 'destination_round', 10),
+    ('destination_info', 'destination_round', 10),
 ])
 def test_question_purpose_owns_counter(kind, counter, limit):
     assert ClarificationPolicy.counter_for(kind) == counter
@@ -41,7 +41,7 @@ def test_unknown_kind_and_request_state_are_rejected():
         ClarificationPolicy(destination_round=1)
 
 
-@pytest.mark.parametrize('value', [-1, 0, 1, 3, True, 2.5])
+@pytest.mark.parametrize('value', [-1, 2.5])
 def test_wrong_destination_budget_is_rejected(value):
     with pytest.raises(ValidationError):
         ClarificationPolicy(max_destination_rounds=value)
@@ -49,8 +49,8 @@ def test_wrong_destination_budget_is_rejected(value):
         AISettings(_env_file=None, max_destination_rounds=value)
 
 
-@pytest.mark.parametrize('value', ['-1', '0', '1', '3', '2.5', 'invalid'])
-def test_env_cannot_change_fixed_destination_budget(monkeypatch, value):
+@pytest.mark.parametrize('value', ['-1', '2.5', 'invalid'])
+def test_env_rejects_invalid_destination_budget(monkeypatch, value):
     monkeypatch.setenv('MAX_DESTINATION_ROUNDS', value)
     with pytest.raises(ValidationError):
         AISettings(_env_file=None)
@@ -113,6 +113,25 @@ def test_backend_env_inheritance_and_production_factory_wiring(monkeypatch):
     for runtime in (False, True):
         settings.agent_runtime_enabled = runtime
         assert build_orchestrator(settings, clarification_policy=policy).clarification_policy is policy
-    monkeypatch.setenv('MAX_DESTINATION_ROUNDS', '3')
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None)
+    monkeypatch.setenv('MAX_DESTINATION_ROUNDS', '20')
+    assert Settings(_env_file=None).build_clarification_policy().max_destination_rounds == 20
+
+
+@pytest.mark.parametrize('maximum', [0, 1, 10, 20])
+def test_destination_budget_uses_env_and_existing_name_precedence(monkeypatch, maximum):
+    monkeypatch.delenv('MAX_DESTINATION_ROUNDS', raising=False)
+    monkeypatch.setenv('GRAPH_MAX_DESTINATION_ROUNDS', str(maximum))
+    assert AISettings(_env_file=None).build_clarification_policy().max_destination_rounds == maximum
+    monkeypatch.setenv('MAX_DESTINATION_ROUNDS', str(maximum + 1))
+    assert AISettings(_env_file=None).build_clarification_policy().max_destination_rounds == maximum + 1
+
+
+def test_destination_budget_reads_dotenv_on_new_settings_instance(tmp_path, monkeypatch):
+    from app.core.config import Settings
+    monkeypatch.delenv('MAX_DESTINATION_ROUNDS', raising=False)
+    monkeypatch.delenv('GRAPH_MAX_DESTINATION_ROUNDS', raising=False)
+    dotenv = tmp_path / '.env'
+    dotenv.write_text('MAX_DESTINATION_ROUNDS=10\n', encoding='utf-8')
+    assert Settings(_env_file=dotenv).build_clarification_policy().max_destination_rounds == 10
+    dotenv.write_text('MAX_DESTINATION_ROUNDS=20\n', encoding='utf-8')
+    assert Settings(_env_file=dotenv).build_clarification_policy().max_destination_rounds == 20

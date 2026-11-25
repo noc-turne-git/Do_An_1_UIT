@@ -1,460 +1,54 @@
-# Frontend Architecture
+# Bản đồ kiến trúc và điều hướng code
 
-## 1. Overview
+Tài liệu này chỉ ra nơi bắt đầu điều tra và ranh giới trách nhiệm hiện tại. Đọc hàm liên quan và caller trực tiếp trước khi mở rộng phạm vi. Chi tiết chính sách nằm trong các tài liệu liên kết ở cuối.
 
-This document defines the technical architecture and code organization of the **frontend** of the travel planning application.
+## Entry point và luồng chính
 
-It describes:
+| Đường vào | Bắt đầu đọc | Vai trò |
+| --- | --- | --- |
+| Giao diện | `frontend/src/main.tsx`, `frontend/src/app/App.tsx`, `frontend/src/app/routes.tsx` | Khởi tạo React, providers và route; trang ghép các feature. |
+| Chat | `backend/app/api/chat.py:send_message`, `ai/interface.py:run_turn` | Nhận lượt hội thoại, dựng ngữ cảnh và gọi graph; parser trích xuất đầu vào cho graph. |
+| Mock có lưu DB | `backend/app/api/workflows.py:persist_mock_run`, `backend/app/services/workflow_factory.py:get_graph_orchestrator` | Kiểm tra request/resume, nạp snapshot và gắn `WorkflowPersistence` trước khi chạy. |
+| Mock một lượt, trong bộ nhớ | `backend/app/api/dev_workflows.py:mock_run` | Gọi `LangGraphOrchestrator.run`; không lưu workflow vào DB. |
+| Python nội bộ | `ai/interface.py:build_orchestrator`, `ai/orchestration/graph_workflow.py:LangGraphOrchestrator.run_turn` | Lắp component theo cấu hình và chạy một lượt. `run` là adapter tương thích. |
 
-* Project structure
-* Responsibilities of each directory
-* Dependency and import rules
-* Component and feature organization
-* Data flow and state management
-* API communication
-* Rules for adding new code
+Luồng thực thi: đầu vào có cấu trúc hoặc văn bản qua `ai/interface.py:run_turn` → `LangGraphOrchestrator.run_turn` → các node LangGraph trong `graph_workflow.py` → kiểm tra output theo `shared/contracts.py` → artifact và trạng thái mới → `WorkflowPersistence.sync/save_graph` nếu có DB. Thứ tự thông thường là Parser → Destination → Constraint Planner → Places → Budget → Planning Input Builder → Engine → Validator → Explainer. `_route` có thể quay về bước trước hoặc dừng chờ người dùng theo kết quả domain. Đường dev chỉ dùng mock component; Engine và Validator mock không thực hiện tối ưu hay kiểm định nghiệp vụ đầy đủ.
 
-Related documents:
+## Trách nhiệm và quyền cập nhật
 
-```text
-docs/UI_Specification.md        → how the interface looks and behaves
-docs/Product_Specification.md   → what the product does
-docs/Data_Model.md              → how application data is structured
-docs/State_Model.md             → how UI/application states transition
-docs/Development_Rules.md       → rules for implementing and modifying code
-```
+| Module | Trách nhiệm cần theo dõi |
+| --- | --- |
+| `shared/contracts.py` | Hợp đồng `TripRequest`, `WorkflowState`, câu hỏi, câu trả lời, episode và provenance. `TripRequest.clear_declined_values`, `daily_days` và `RequestMeta.normalize_decisions` còn chuẩn hóa dữ liệu cũ, suy ra collection state, `missing_fields` và `parser_status` khi validate. |
+| `ai/orchestration/request_parser.py` | Trích xuất lượt văn bản thành bản nháp `TripRequest`; không sở hữu lịch sử câu trả lời, bộ đếm hay quyết định route. |
+| `ai/orchestration/graph_workflow.py` | `GraphRun`, lập lịch qua `_route`, invalidation, kiểm tra/lưu output tại `_node` và `_save`, xử lý kết quả tại `_outcome`, vòng đời lượt và resume tại `run_turn/_execute`. |
+| `ai/orchestration/workflow_state.py` | `WorkflowRun`, `StateMachine.update/fail/issue_question/clarify`: validate transition, tạo checkpoint, quản lý trạng thái câu hỏi và giới hạn lượt hỏi. |
+| `backend/app/services/persistence.py` | `WorkflowPersistence`: giao dịch phát/nhận câu hỏi, artifact, projection, đối chiếu canonical DB với graph, JSON `GraphRun` snapshot và nạp lại. `backend/app/repositories/clarifications.py` giữ dữ liệu episode/câu hỏi/câu trả lời; `backend/app/repositories/workflows.py` giữ request projection. |
 
-The backend is out of scope for this document. The frontend only depends on the backend through the API contract (see section 12).
+`TripRequest` không có một nơi ghi duy nhất: parser tạo đầu vào; `clarification_answers.accept_answer`, `trip_request_defaults.apply_trip_defaults`, `destination_resolution.apply_resolved_destination` và `turns.seed_after_failed` tạo bản cập nhật theo từng tình huống; graph quyết định khi nào áp dụng và lưu artifact; validators trong contract chuẩn hóa/kiểm tra khi `model_validate`. Khi điều tra giá trị bị đổi, bắt đầu từ nguồn cập nhật phù hợp rồi theo `meta.field_sources`, `field_decisions`, selection provenance và artifact ID. Không suy nguồn từ giá trị đơn lẻ.
 
----
+Trạng thái cũng có ba ranh giới cần đọc cùng nhau: graph quyết định route, invalidation và bộ đếm thực thi; `StateMachine` kiểm tra và ghi transition/checkpoint; Persistence đối chiếu và ghi canonical episode/câu hỏi/câu trả lời, projection, artifact và snapshot. `save_graph/load_graph` dùng JSON application snapshot, không phải LangGraph checkpointer. Resume phải giữ identity của câu hỏi/episode, lịch sử, giới hạn lượt, tham chiếu artifact và tương thích snapshot cũ. Không di chuyển các trách nhiệm này chỉ để gom file.
 
-# 2. Technology Stack
+## Bắt đầu điều tra theo triệu chứng
 
-* React
-* TypeScript
-* Vite
-* React Router
-* Tailwind CSS
-* Server state: TanStack Query
-* Client state: Zustand (only for state shared across components; prefer local state first)
-* HTTP client: fetch (wrapped in `services/api`)
-* Testing: Vitest + React Testing Library
+| Vấn đề | File/hàm đọc trước |
+| --- | --- |
+| Giá trị `TripRequest`, `missing_fields` hoặc nguồn dữ liệu sai | `shared/contracts.py:TripRequest.clear_declined_values/daily_days/should_ask`, `RequestMeta.normalize_decisions`; sau đó hàm tạo cập nhật tương ứng ở bảng trên. |
+| Câu hỏi lặp, answer sai hoặc hết lượt hỏi | `ai/orchestration/workflow_state.py:StateMachine.issue_question/clarify`, `ai/orchestration/clarification_answers.py:accept_answer`; nếu có DB, `WorkflowPersistence.issue_question` và `ClarificationRepository.issue/answer`. |
+| Route, replan, invalidation hoặc retry sai | `ai/orchestration/graph_workflow.py:LangGraphOrchestrator._route/_node/_invalidate/_outcome`. |
+| Resume, snapshot hoặc artifact lệch DB | `backend/app/services/persistence.py:WorkflowPersistence.load_graph/save_graph/_validate_canonical/sync`; sau đó `graph_workflow.py:LangGraphOrchestrator.run_turn/_execute` và repository liên quan. |
+| Chat và mock-run khác nhau | `backend/app/api/chat.py:send_message`, `backend/app/api/workflows.py:persist_mock_run`, `backend/app/api/dev_workflows.py:mock_run`, `ai/interface.py:run_turn/build_orchestrator`. |
+| UI, route hoặc dữ liệu frontend | `frontend/src/app/routes.tsx`, trang tại `frontend/src/pages/`, feature tại `frontend/src/features/`, `frontend/src/services/api/client.ts`. |
 
-> Items marked with a specific library are the project defaults. Changing one requires updating this document.
+Với lỗi theo một run cụ thể, dùng quy trình trace trong `AGENTS.md` trước khi đọc log thô.
 
----
+## Phần frontend còn áp dụng
 
-# 3. Directory Structure
+Frontend dùng React, TypeScript, Vite, React Router, TanStack Query và Zustand. `app/` giữ router/providers; `pages/` ghép feature; `features/` giữ UI và nghiệp vụ theo domain; `components/` và `hooks/` ở gốc dành cho phần dùng chung; `services/api/` là HTTP client. Giữ trạng thái UI cục bộ ở component, dữ liệu server trong TanStack Query và trạng thái client chia sẻ trong store khi cần. Feature gọi API qua service/hook; phần dùng chung không phụ thuộc ngược vào page/feature. Đây là nguyên tắc điều hướng, không phải bảo đảm mọi file hiện tại đều tuân thủ.
 
-```text
-frontend/
-├── src/
-│   ├── app/
-│   ├── pages/
-│   ├── features/
-│   ├── components/
-│   ├── hooks/
-│   ├── services/
-│   ├── types/
-│   ├── utils/
-│   └── assets/
-│
-├── public/
-└── ...
-```
+## Tài liệu chi tiết
 
----
-
-# 4. `app/`
-
-Application-level configuration.
-
-```text
-app/
-├── App.tsx
-├── routes.tsx
-└── providers/
-```
-
-Responsibilities:
-
-* Application entry
-* Routing
-* Global providers (Query client, router, theme, auth)
-* Global configuration
-
-Do not put feature-specific logic here.
-
----
-
-# 5. `pages/`
-
-Page-level components, one per major route.
-
-```text
-pages/
-├── HomePage.tsx
-├── ExplorePage.tsx
-├── TripsPage.tsx
-└── TripPage.tsx
-```
-
-Pages compose feature components and handle route params and layout.
-Pages must not contain business logic or API calls.
-
----
-
-# 6. `features/`
-
-Domain-specific functionality.
-
-```text
-features/
-├── trip/
-├── chat/
-├── place/
-├── itinerary/
-├── idea/
-├── map/
-└── user/
-```
-
-Each feature owns its components, hooks, services, types, and logic:
-
-```text
-features/trip/
-├── components/
-├── hooks/
-├── services/
-├── types.ts
-├── __tests__/
-└── index.ts        ← public API of the feature
-```
-
-### Public API rule
-
-Each feature exposes only what other code may use through `index.ts`.
-Anything not exported from `index.ts` is private to the feature.
-
----
-
-# 7. `components/`
-
-Reusable UI components that are **not** tied to any domain.
-
-```text
-components/
-├── Button/
-├── Modal/
-├── Card/
-├── Dropdown/
-├── Avatar/
-└── Tabs/
-```
-
-A shared component must not know about trips, places, chat, or any other domain concept.
-
-* `components/Button` → correct
-* `features/trip/components/TripActionButton` → correct for a trip-specific button
-
----
-
-# 8. `hooks/`
-
-Generic reusable hooks that are not tied to a domain.
-
-```text
-hooks/
-├── useDebounce.ts
-├── useModal.ts
-└── useMediaQuery.ts
-```
-
-Domain hooks live in their feature, e.g. `features/trip/hooks/useTrip.ts`.
-
----
-
-# 9. `services/`
-
-Global infrastructure only. No domain logic.
-
-```text
-services/
-├── api/        ← HTTP client, interceptors, error normalization
-├── auth/
-├── maps/
-└── storage/
-```
-
-Feature-specific API functions (e.g. `addPlaceToTrip`) live in `features/<feature>/services/` and use the global API client.
-
-```text
-services/api          → how to make a request
-features/trip/services → which requests the trip domain makes
-```
-
-UI components must not call `fetch` or the API client directly.
-
----
-
-# 10. `types/`
-
-Shared TypeScript types used by **two or more features**.
-
-```text
-types/
-├── user.ts
-├── trip.ts
-├── place.ts
-└── itinerary.ts
-```
-
-Types used by only one feature stay in that feature's `types.ts`.
-
----
-
-# 11. `utils/`
-
-Small, pure, framework-independent helper functions.
-
-```text
-utils/
-├── date.ts
-├── format.ts
-├── validation.ts
-└── constants.ts
-```
-
-Utilities must not contain UI logic or import from `features/`.
-
----
-
-# 12. API Communication
-
-* All requests go through `services/api`.
-* Feature services define domain functions such as `tripService.addPlace()`.
-* Hooks call feature services; components call hooks.
-* Request/response types are defined in `types/` or in the feature's `types.ts`, and mirror the backend API contract.
-* The API base URL comes from environment config (`VITE_API_BASE_URL`), never hard-coded.
-
-Errors are normalized in `services/api` into a single shape so that hooks and components handle them consistently.
-
----
-
-# 13. Dependency and Import Rules
-
-Allowed dependency direction:
-
-```text
-pages → features → components / hooks / services / types / utils
-```
-
-Rules:
-
-1. `pages/` may import from `features/`, `components/`, `hooks/`, `types/`, `utils/`.
-2. `features/` may import from `components/`, `hooks/`, `services/`, `types/`, `utils/`.
-3. `features/` must **not** import from `pages/`.
-4. `components/`, `hooks/`, `services/`, `types/`, `utils/` must **not** import from `features/` or `pages/`.
-5. A feature may import another feature **only** through that feature's `index.ts`. Never import deep paths such as `features/trip/hooks/internal/...`.
-6. Avoid circular dependencies between features. If two features need each other, extract the shared part or communicate through a service/store.
-
----
-
-# 14. Data Flow
-
-```text
-User interaction
-      ↓
-React component
-      ↓
-Feature hook (TanStack Query / Zustand)
-      ↓
-Feature service
-      ↓
-services/api
-      ↓
-Backend API
-```
-
-Example:
-
-```text
-User clicks "Add to Trip"
-        ↓
-PlaceCard (features/place)
-        ↓
-useAddPlaceToTrip()
-        ↓
-tripService.addPlace()
-        ↓
-POST /trips/{tripId}/places
-```
-
----
-
-# 15. State Management
-
-### Local UI state
-
-Modal open/closed, dropdown, active tab, hover, form input.
-Use `useState` / `useReducer` inside the component.
-
-### Feature (client) state
-
-State shared across several components of a feature or across features that is **not** from the server, such as the currently selected place, map viewport, or chat draft.
-Use Zustand, with one store per feature located in `features/<feature>/store/`.
-
-### Server state
-
-Everything fetched from the backend: trips, places, itinerary, messages.
-Use TanStack Query:
-
-* Query keys are defined per feature (e.g. `tripKeys.detail(tripId)`).
-* Mutations invalidate or update the related queries.
-* Do not copy server data into Zustand.
-
----
-
-# 16. Cross-Feature Communication
-
-Features must not manipulate each other's internals.
-
-Example: Chat must not modify Trip state directly.
-
-```text
-Chat
-  ↓
-Trip public API (features/trip/index.ts) or trip service
-  ↓
-Trip
-```
-
-After a chat action changes a trip, refresh the trip by invalidating the relevant query, not by writing into the trip store from the chat feature.
-
----
-
-# 17. Routing
-
-Routes are defined centrally in `frontend/src/app/routes.tsx`.
-
-```text
-/
-├── /explore
-├── /trips
-├── /trips/:tripId
-└── /saved
-```
-
-Do not define routes inside feature components.
-
----
-
-# 18. Shared vs Feature Components
-
-**Shared** (generic): `Button`, `Modal`, `Dropdown`, `Tabs`, `Card`, `Avatar`
-
-**Feature** (domain-aware): `TripCard`, `ItineraryItem`, `IdeaCard`, `ChatMessage`, `TripHeader`
-
-Rule of thumb: if the component would have to know what a trip, place, or message is, it belongs in a feature.
-
----
-
-# 19. Naming Conventions
-
-* React components and their files: `PascalCase` (`TripCard.tsx`)
-* Hooks: `camelCase` starting with `use` (`useTrip.ts`)
-* Functions and variables: `camelCase`
-* Types and interfaces: `PascalCase`
-* Constants: `UPPER_SNAKE_CASE`
-* Feature folders: lowercase singular (`trip`, `chat`)
-
-Avoid generic names such as `Component.tsx`, `Data.ts`, `Helper.ts`, `Manager.ts`.
-
----
-
-# 20. Loading, Empty, Success, and Error States
-
-Every data-driven feature defines all four states:
-
-```text
-Loading
-Empty
-Success
-Error
-```
-
-Example, trip list:
-
-```text
-Trip list
-├── Loading
-├── Empty
-├── Loaded
-└── Error
-```
-
-Network errors are handled at the hook/service layer and surfaced to components in a consistent shape. Components should not each implement their own error parsing.
-
----
-
-# 21. Testing
-
-Tests live next to the code they cover:
-
-```text
-features/trip/
-├── components/
-├── hooks/
-├── services/
-└── __tests__/
-```
-
-Prioritize tests for:
-
-* Business logic in hooks and stores
-* State transitions
-* Feature services (with mocked API client)
-* Important user interactions
-
----
-
-# 22. Architecture Rules
-
-When adding or modifying code:
-
-1. Follow this architecture.
-2. Reuse existing components, hooks, and services.
-3. Do not duplicate business logic.
-4. Do not move code between layers without a clear reason.
-5. Do not put business logic in presentational components.
-6. Do not call the API directly from UI components.
-7. Keep feature-specific logic inside its feature.
-8. Keep shared components domain-independent.
-9. Follow the import rules in section 13.
-10. Avoid unnecessary abstractions.
-11. Do not rewrite unrelated code.
-
----
-
-# 23. Relationship With Other Documentation
-
-```text
-Architecture.md          → how the frontend code is structured
-UI_Specification.md      → how the interface behaves and looks
-Product_Specification.md → what the product does
-Data_Model.md            → how application data is structured
-State_Model.md           → how UI/application states transition
-Development_Rules.md     → implementation constraints
-```
-
-Each document is the source of truth for its own domain.
-
-If two documents conflict in an overlapping area, resolve it in this order:
-
-1. Product Specification (what the product must do)
-2. UI Specification (how it must look and behave)
-3. Data Model / State Model
-4. Architecture (how it is built)
-5. Development Rules
-
-Fix the lower-priority document so the conflict does not persist.
+- [GRAPH_WORKFLOW.md](../ai/GRAPH_WORKFLOW.md): route, invalidation, giới hạn, resume và trạng thái graph.
+- [CLARIFICATION_POLICY.md](../ai/CLARIFICATION_POLICY.md): provenance, thẩm quyền chọn destination, bộ đếm, lifecycle và tương thích.
+- [MOCK_WORKFLOW.md](../ai/MOCK_WORKFLOW.md): phạm vi mock và hai đường chạy demo.
+- [PLANNING_CONTRACTS.md](../ai/PLANNING_CONTRACTS.md): contract lập kế hoạch; đọc lưu ý đầu tài liệu về phần mô tả cũ.
+- [Backend_ERD.md](Backend_ERD.md), [README.md](../../backend/supabase/README.md): bảng dữ liệu và thiết lập persistence.

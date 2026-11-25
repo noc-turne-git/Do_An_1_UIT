@@ -9,6 +9,7 @@ from typing import Annotated, Generic, Literal, TypeVar
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt, StrictBool, field_validator, model_validator, model_serializer
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from shared.clarification_config import DEFAULT_MAX_DESTINATION_ROUNDS
 
 Money = Annotated[StrictInt, Field(ge=0, le=9223372036854775807)]
 Minutes = Annotated[StrictInt, Field(ge=0, le=2147483647)]
@@ -30,7 +31,10 @@ class Contract(Model):
 SelectionIntent = Literal["EXPLICIT", "USER_UNKNOWN", "ANY_DESTINATION",
                           "DELEGATE_SELECTION", "UNSPECIFIED"]
 SelectionAuthority = Literal["USER", "AGENT", "SYSTEM"] | None
-DestinationSource = Literal["user", "AGENT_DELEGATED", "SYSTEM_DEFAULT"] | None
+# SYSTEM_DEFAULT is read-only compatibility for historical artifacts. Runtime
+# authorization only emits USER or AGENT_DELEGATED.
+DestinationSource = Literal["USER", "AGENT_DELEGATED", "SYSTEM_DEFAULT"] | None
+DestinationAction = Literal['none', 'delegate', 'suggest_again', 'refine']
 QuestionKind = Literal["trip_request", "destination_info", "destination_choice"]
 PositiveInt = Annotated[StrictInt, Field(gt=0)]
 NonEmpty = Annotated[str, Field(min_length=1, pattern=r"\S")]
@@ -71,23 +75,29 @@ class SelectionPolicy(Model):
     destination_source: DestinationSource = None
     selection_provenance: SelectionProvenance | None = None
 
+    @field_validator('destination_source', mode='before')
+    @classmethod
+    def normalize_user_source(cls, value):
+        return 'USER' if value == 'user' else value
+
     @model_validator(mode="after")
     def authority_is_explicit(self):
         intent, authority, source = (self.selection_intent, self.selection_authority,
                                      self.destination_source)
         if intent == 'EXPLICIT':
-            if authority != 'USER' or source != 'user':
+            if authority != 'USER' or source != 'USER':
                 raise ValueError('explicit destination requires USER authority and user source')
         elif intent == 'USER_UNKNOWN':
-            if authority != 'USER' or source not in {None, 'user'}:
+            if authority != 'USER' or source not in {None, 'USER'}:
                 raise ValueError('USER_UNKNOWN retains USER authority without a system source')
         elif intent == 'ANY_DESTINATION':
-            if (authority, source) not in {('USER', None), ('USER', 'user'),
+            if (authority, source) not in {('USER', None), ('USER', 'USER'),
                                            ('SYSTEM', 'SYSTEM_DEFAULT')}:
                 raise ValueError('ANY_DESTINATION requires USER choice or SYSTEM_DEFAULT')
         elif intent == 'DELEGATE_SELECTION':
-            if authority != 'AGENT' or source not in {None, 'AGENT_DELEGATED'}:
-                raise ValueError('delegated selection requires AGENT authority')
+            if not ((authority == 'USER' and source is None)
+                    or (authority == 'AGENT' and source in {None, 'AGENT_DELEGATED'})):
+                raise ValueError('delegation starts with USER choice; an authorized grant may assign AGENT')
         elif authority is not None or source is not None:
             raise ValueError('UNSPECIFIED must not assign decision authority or source')
         return self
@@ -354,6 +364,30 @@ class CandidateRegion(Region):
     rank: PositiveInt | None = None
 
 
+class DestinationConversation(Model):
+    """CODE-owned conversation state, persisted with the graph snapshot."""
+    phase: Literal['consulting', 'awaiting_choice', 'resolved'] = 'consulting'
+    candidates: list[CandidateRegion] = Field(default_factory=list)
+    candidate_batches: list[list[CandidateRegion]] = Field(default_factory=list)
+    rejected_candidates: list[CandidateRegion] = Field(default_factory=list)
+    delegated_candidate_ids: list[NonEmpty] = Field(default_factory=list)
+    last_feedback: str | None = None
+    decision_source: Literal['USER', 'AGENT_DELEGATED'] | None = None
+
+    @model_validator(mode='after')
+    def grant_matches_offer(self):
+        ids = {candidate.candidate_id for candidate in self.candidates}
+        if not set(self.delegated_candidate_ids) <= ids:
+            raise ValueError('Delegation must refer to candidates already offered')
+        if self.phase == 'awaiting_choice' and not self.candidates:
+            raise ValueError('An offer requires candidates')
+        if (self.phase == 'resolved') != (self.decision_source is not None):
+            raise ValueError('Only a resolved conversation has a decision source')
+        if self.phase == 'resolved' and self.delegated_candidate_ids:
+            raise ValueError('A completed decision consumes its delegation')
+        return self
+
+
 class ConstraintProposal(Model):
     proposal_id: NonEmpty
     fields: Annotated[list[NonEmpty], Field(min_length=1)]
@@ -367,6 +401,10 @@ class ConstraintProposal(Model):
             raise ValueError("proposal values must match unique fields")
         if self.current_values is not None and set(self.fields) != set(self.current_values):
             raise ValueError('current constraint values must match proposal fields')
+        if any(path in {'meta', 'destination', 'schema_version', 'missing_fields'}
+               or path.startswith(('meta.', 'destination.selection_', 'destination.destination_source'))
+               for path in self.fields):
+            raise ValueError('Constraint proposals cannot change selection policy or metadata')
         return self
 
 
@@ -374,12 +412,14 @@ class InformationRequest(Model):
     purpose: Literal["trip_request", "destination_info"]
     fields: Annotated[list[NonEmpty], Field(min_length=1)]
     reason: NonEmpty
+    question: NonEmpty | None = None
 
 
 class DestinationRecovery(Model):
     reason: NonEmpty
     fields: Annotated[list[NonEmpty], Field(min_length=1)]
     constraint_proposal: ConstraintProposal | None = None
+    question: NonEmpty | None = None
 
 
 class DestinationResult(Contract):
@@ -394,6 +434,12 @@ class DestinationResult(Contract):
     selected_candidate_id: NonEmpty | None = None
     destination_source: DestinationSource = None
     selection_method: Literal['USER_EXPLICIT', 'USER_CHOICE', 'AGENT_DELEGATED', 'SYSTEM_DEFAULT'] | None = None
+    choice_question: NonEmpty | None = None
+
+    @field_validator('destination_source', mode='before')
+    @classmethod
+    def normalize_user_source(cls, value):
+        return 'USER' if value == 'user' else value
 
     @model_validator(mode="after")
     def selection_consistent(self):
@@ -939,6 +985,7 @@ class AnswerHistory(Model):
     confirmed_proposal_id: NonEmpty | None = None
     constraint_confirmed: StrictBool | None = None
     destination_update: Destination | None = None
+    destination_action: DestinationAction = 'none'
 
     @model_validator(mode="after")
     def linked_identity(self):
@@ -959,7 +1006,7 @@ class AnswerHistory(Model):
                     or (d.selection_intent in {'ANY_DESTINATION', 'USER_UNKNOWN'}
                         and d.selection_authority == 'USER')
                     or (d.selection_intent == 'DELEGATE_SELECTION'
-                        and d.selection_authority == 'AGENT')):
+                        and d.selection_authority in {'USER', 'AGENT'})):
                 raise ValueError('destination update requires a parser-confirmed intent')
         return self
 
@@ -979,7 +1026,8 @@ class AnswerHistory(Model):
                     raise ValueError('unknown option')
                 if self.destination_update is not None:
                     raise ValueError('option and new destination are mutually exclusive')
-            elif self.destination_update is None and 'destination.city' not in self.declared_unknown_fields:
+            elif (self.destination_update is None and 'destination.city' not in self.declared_unknown_fields
+                  and self.destination_action == 'none'):
                 raise ValueError('missing option or parser-confirmed destination response')
         if question.constraint_proposal:
             if self.confirmed_proposal_id != question.constraint_proposal.proposal_id or self.constraint_confirmed is None:
@@ -994,15 +1042,14 @@ class DestinationEpisode(SelectionPolicy):
     request_id: UUID
     status: Literal["active", "completed", "failed"] = "active"
     destination_round: Minutes = 0
-    max_destination_rounds: Annotated[StrictInt, Field(ge=0, le=2)] = 2
+    # Advisory limit for information gathering; candidate choices may continue.
+    max_destination_rounds: Minutes = DEFAULT_MAX_DESTINATION_ROUNDS
     final_resolve_status: Literal["not_started", "claimed", "completed"] = "not_started"
     final_resolve_id: UUID | None = None
     final_resolve_result: DestinationResult | None = None
 
     @model_validator(mode="after")
     def consistent(self):
-        if self.destination_round > self.max_destination_rounds:
-            raise ValueError("episode destination budget exceeded")
         if (self.final_resolve_status == "not_started") != (self.final_resolve_id is None):
             raise ValueError("final resolve identity/state mismatch")
         if (self.final_resolve_status == "completed") != (self.final_resolve_result is not None):
@@ -1010,18 +1057,8 @@ class DestinationEpisode(SelectionPolicy):
         return self
 
     def default_candidate(self):
-        """A permission gate, not an orchestration side effect."""
-        self.consistent()
-        self.authority_is_explicit()
-        if self.status == 'failed' or self.selection_intent != "ANY_DESTINATION" or self.final_resolve_status != "completed":
-            raise ValueError("default requires exhausted ANY_DESTINATION after final resolve")
-        candidates = self.final_resolve_result.candidate_regions
-        if self.final_resolve_result.selection_status not in {'selected', 'needs_user_choice'} or self.final_resolve_result.missing_fields:
-            raise ValueError('final resolve remains unresolved')
-        ranked = [c for c in candidates if c.rank == 1 and c.candidate_id and c.city.strip() and c.reason.strip()]
-        if len(ranked) != 1:
-            raise ValueError("no unique valid rank 1 candidate")
-        return ranked[0]
+        """Historical final-resolve records never grant selection permission."""
+        raise ValueError('Automatic destination defaults are no longer authorized')
 
 
 class Attempt(Model):
@@ -1064,17 +1101,33 @@ class WorkflowState(Contract):
     clarification_round: Minutes
     max_clarification_rounds: Minutes = 3
     destination_round: Minutes = 0
-    max_destination_rounds: Minutes = 2
+    max_destination_rounds: Minutes = DEFAULT_MAX_DESTINATION_ROUNDS
     destination_episode: DestinationEpisode | None = None
     pending_fields: list[str]
     retry_count: Minutes
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_destination_budget(cls, value):
+        # Some snapshots predate the mirrored episode fields. Inherit a stored
+        # value on the missing side; never overwrite two explicitly stored values.
+        if isinstance(value, dict) and isinstance(value.get('destination_episode'), dict):
+            value = dict(value)
+            episode = dict(value['destination_episode'])
+            for field in ('destination_round', 'max_destination_rounds'):
+                if field not in value and field in episode:
+                    value[field] = episode[field]
+                elif field in value and field not in episode:
+                    episode[field] = value[field]
+            value['destination_episode'] = episode
+        return value
 
     @model_validator(mode="after")
     def clarification_consistent(self):
         if self.clarification_round > self.max_clarification_rounds:
             raise ValueError("clarification limit exceeded")
-        if self.destination_round > self.max_destination_rounds:
-            raise ValueError("destination limit exceeded")
+        # Choices are exempt from the information cap; lowering configuration
+        # must also preserve already-consumed rounds and actionable questions.
         if self.destination_episode:
             episode = self.destination_episode
             if episode.request_id != self.request_id:

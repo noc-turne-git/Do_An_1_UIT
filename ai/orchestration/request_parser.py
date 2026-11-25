@@ -1,16 +1,18 @@
 """Extract and merge user requirements; lifecycle and issuance belong to Graph."""
 import json
+import re
 from copy import deepcopy
 from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import Field, ValidationError
-from shared.contracts import (DestinationFieldDecision, LEGACY_DECLINED_DECISIONS, Model,
+from shared.contracts import (DestinationAction, DestinationFieldDecision, LEGACY_DECLINED_DECISIONS, Model,
                               TRIP_COLLECTION_FIELDS, TripFieldState, TripRequest)
 from ai.agents.contracts import AgentContext, AgentDefinition, AgentStatus, ExecutionLimits
 from ai.agents.runtime.factory import create_agent_harness
 from ai.orchestration.date_normalization import DATE_PATHS, normalize_trip_dates
+from ai.orchestration.destination_resolution import clear_region_fields
 from ai.logging import log_execution
 
 DECISIONS = TripFieldState | DestinationFieldDecision
@@ -51,6 +53,45 @@ def empty_request():
         missing_fields=[]))
 
 
+def apply_traveler_evidence(request, content, previous=None):
+    """Keep narrow traveler phrases from becoming unsupported user facts."""
+    phrase = re.sub(r'[.!?]+$', '', content.strip().lower()).strip()
+    data = request.model_dump()
+    before = previous or empty_request()
+    has_traveler_count = bool(re.search(r'\d+\s+(?:người lớn|trẻ em|em bé|bé|con)\b', phrase))
+    adult_count = re.search(r'(?<!\d)(\d+)\s+người lớn\b', phrase)
+    has_child_evidence = bool(re.search(r'\b(?:trẻ em|em bé|bé|con)\b', phrase))
+    direct_adult_count = re.fullmatch(r'(\d+)\s+người lớn', phrase)
+    inferred_family = bool(re.fullmatch(
+        r'(?:tôi|mình|em|con)\s+(?:và|với)\s+(?:ba mẹ|bố mẹ|cha mẹ)', phrase))
+    if 'cả nhà' in phrase and not has_traveler_count:
+        fields = ('adults', 'children')
+    elif inferred_family:
+        fields = ('adults', 'children') if before.travelers.adults is not None else ('children',)
+    elif adult_count and not has_child_evidence:
+        fields = ('children',)
+    else:
+        fields = ()
+    for field in fields:
+        path = f'travelers.{field}'
+        data['travelers'][field] = getattr(before.travelers, field)
+        for key in ('field_sources', 'field_confidences', 'field_decisions'):
+            data['meta'][key].pop(path, None)
+            if path in getattr(before.meta, key):
+                data['meta'][key][path] = getattr(before.meta, key)[path]
+    if direct_adult_count:
+        data['travelers']['adults'] = int(direct_adult_count.group(1))
+        data['meta']['field_sources']['travelers.adults'] = 'user'
+        data['meta']['field_confidences'].pop('travelers.adults', None)
+        data['meta']['field_decisions']['travelers.adults'] = 'SPECIFIED'
+    if inferred_family and before.travelers.adults is None:
+        data['travelers']['adults'] = 3
+        data['meta']['field_sources']['travelers.adults'] = 'inferred'
+        data['meta']['field_confidences']['travelers.adults'] = 0.95
+        data['meta']['field_decisions']['travelers.adults'] = 'SPECIFIED'
+    return TripRequest.model_validate(data)
+
+
 class Change(Model):
     path: str
     value_json: str  # JSON scalar/list/object; validated against TripRequest after merge.
@@ -64,10 +105,14 @@ class FollowUp(Model):
 
 class ParserOutput(Model):
     intent: Literal['conversation', 'travel_advice', 'trip_planning'] = 'trip_planning'
+    requested_action: Literal['information', 'destination_recommendation',
+        'destination_selection', 'selection_delegation', 'itinerary_planning',
+        'itinerary_modification'] | None = None
     summary: str = Field(min_length=1, max_length=4000)
     changes: list[Change]
     questions: list[FollowUp] = Field(default_factory=list)
     conflicting_input: bool = False
+    destination_action: DestinationAction = 'none'
 
 
 from ai.prompts.request_parser import PROMPT
@@ -83,6 +128,9 @@ def apply_changes(previous, output, *, current_date=None):
         parts = change.path.split('.')
         if parts[0] in {'meta', 'missing_fields', 'schema_version'}:
             raise ValueError('Protected parser path')
+        if change.path.startswith(('destination.selection_intent', 'destination.selection_authority',
+                                   'destination.destination_source', 'destination.selection_provenance')):
+            raise ValueError('Selection policy is owned by CODE, not the parser')
         if len(parts) == 1 and parts[0] in {'destination', 'trip', 'travelers', 'budget', 'preferences'}:
             raise ValueError('Update individual fields to preserve previous answers')
         node = payload
@@ -163,19 +211,30 @@ def apply_changes(previous, output, *, current_date=None):
                     'UNKNOWN' if 'UNKNOWN' in decisions else None)
         if city and city[0] == 'SPECIFIED' and isinstance(city[1], str) and city[1].strip():
             payload['destination'].update(selection_intent='EXPLICIT',
-                selection_authority='USER', destination_source='user', selection_mode='explicit',
+                selection_authority='USER', destination_source='USER', selection_mode='explicit',
                 selection_provenance=dict(source='user', evidence='destination.city=' + city[1]))
             payload['meta']['field_sources']['destination.selection_mode'] = 'user'
             payload['meta']['field_decisions']['destination.selection_mode'] = 'SPECIFIED'
+            if city[1] != previous.destination.city:
+                changed_paths = {change.path for change in output.changes}
+                clear_region_fields(payload, [field for field in ('province', 'country')
+                    if f'destination.{field}' not in changed_paths
+                    and previous.meta.field_sources.get(f'destination.{field}') != 'user'])
         elif decision in {'UNKNOWN', 'FLEXIBLE', 'NO_PREFERENCE', 'AI_DECIDE'}:
             intent = {'UNKNOWN': 'USER_UNKNOWN', 'FLEXIBLE': 'ANY_DESTINATION',
                       'NO_PREFERENCE': 'ANY_DESTINATION', 'AI_DECIDE': 'DELEGATE_SELECTION'}[decision]
             authority = {'UNKNOWN': 'USER', 'FLEXIBLE': 'USER',
-                         'NO_PREFERENCE': 'USER', 'AI_DECIDE': 'AGENT'}[decision]
+                         'NO_PREFERENCE': 'USER', 'AI_DECIDE': 'USER'}[decision]
             payload['destination'].update(selection_intent=intent,
                 selection_authority=authority, destination_source=None,
                 selection_mode='implicit' if decision != 'UNKNOWN' else 'ambiguous',
-                selection_provenance=dict(source='user', evidence='destination:' + decision), city=None)
+                selection_provenance=dict(source='user', evidence='destination:' + decision),
+                city=None)
+            changed_paths = {change.path for change in output.changes}
+            clear_region_fields(payload, [field for field in ('province', 'country')
+                if f'destination.{field}' not in changed_paths
+                and previous.destination.destination_source is not None
+                and previous.meta.field_sources.get(f'destination.{field}') != 'user'])
             payload['meta']['field_sources']['destination.selection_mode'] = 'user'
             payload['meta']['field_decisions']['destination.selection_mode'] = decision
         elif 'DEFERRED' in decisions:
@@ -230,11 +289,20 @@ def collection_question(request, *, fields=None, drafts=()):
     return None
 
 
+def recommendation_request(request, *, current_date=None):
+    """A request for suggestions leaves the user in charge of choosing."""
+    if request.destination.selection_intent != 'UNSPECIFIED':
+        return request
+    return apply_changes(request, ParserOutput(summary='Destination recommendations',
+        changes=[Change(path='destination.city', value_json='null', decision='UNKNOWN')]),
+        current_date=current_date)
+
+
 async def parse_turn(settings, *, previous, content, history, request_id, conversation_id,
                      extraction_only=False, pending_question=None, workflow_context=None):
     from ai.orchestration.turns import ParsedTurn
     def result_value(value, reply, error, planning=True):
-        return ParsedTurn(value, reply, error, planning) if extraction_only else (value, reply, error)
+        return ParsedTurn(value, reply, error, planning, action='information') if extraction_only else (value, reply, error)
     timezone_name = previous.trip.timezone or 'Asia/Ho_Chi_Minh'
     user_date = datetime.now(ZoneInfo(timezone_name)).date()
     definition = AgentDefinition(name='chat_request_parser', description='Travelio conversation, travel advice and trip requirements',
@@ -261,14 +329,20 @@ async def parse_turn(settings, *, previous, content, history, request_id, conver
             input={'content': content, 'previous_request': previous}, output=result)
         if result.status != AgentStatus.SUCCESS:
             return result_value(None, None, result.error.code if result.error else 'INVALID_PARSER_OUTPUT')
-        if result.output.intent != 'trip_planning':
+        action = result.output.requested_action or (
+            'information' if result.output.intent != 'trip_planning' else 'itinerary_planning')
+        if action == 'information' or result.output.intent == 'conversation':
             # Casual conversation and advice must never alter the collected
             # requirements or trigger missing-field questions.
             return result_value(previous.model_copy(deep=True), result.output.summary, None, False)
         if result.output.conflicting_input:
             return result_value(None, None, 'CONFLICTING_INPUT')
         try:
-            request = apply_changes(previous, result.output, current_date=user_date)
+            request = apply_traveler_evidence(
+                apply_changes(previous, result.output, current_date=user_date), content, previous)
+            if (action == 'destination_recommendation'
+                    and request.destination.selection_intent == 'UNSPECIFIED'):
+                request = recommendation_request(request, current_date=user_date)
             log_execution(run_id=request_id, conversation_id=conversation_id, step='parser.apply_changes',
                 event_type='parser.transformation', phase='completed',
                 input={'previous_request': previous, 'parser_output': result.output,
@@ -282,6 +356,9 @@ async def parse_turn(settings, *, previous, content, history, request_id, conver
         if extraction_only:
             request.meta.raw_prompt = content
             return ParsedTurn(request, ACKNOWLEDGEMENT,
+                              action=action,
+                              destination_action=result.output.destination_action,
+                              changed_fields=[change.path for change in result.output.changes],
                               question_drafts=[question.model_dump() for question in
                                                applicable_followups(request, result.output.questions)])
         # Ask one actionable question per turn.  Remaining LLM questions are

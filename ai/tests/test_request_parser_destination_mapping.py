@@ -37,6 +37,28 @@ def test_specified_destination_city_is_an_explicit_user_selection():
                 'EXPLICIT', 'USER', 'explicit', 'Da Nang')
 
 
+def test_city_only_change_derives_explicit_destination_policy():
+    request = apply_destination_change('destination.city', 'SPECIFIED', '"Đà Lạt"')
+
+    assert request.destination.city == 'Đà Lạt'
+    assert request.destination.selection_intent == 'EXPLICIT'
+    assert request.destination.selection_authority == 'USER'
+    assert request.destination.destination_source == 'USER'
+    assert request.destination.selection_mode == 'explicit'
+    assert request.destination.selection_provenance.source == 'user'
+    assert request.meta.field_decisions['destination.selection_mode'] == 'SPECIFIED'
+    assert 'destination.selection_mode' not in request.missing_fields
+
+
+@pytest.mark.parametrize('path', [
+    'destination.selection_intent', 'destination.selection_authority',
+    'destination.destination_source', 'destination.selection_provenance',
+])
+def test_parser_cannot_write_destination_policy_paths(path):
+    with pytest.raises(ValueError, match='Selection policy is owned by CODE'):
+        apply_destination_change(path, 'SPECIFIED', '"EXPLICIT"')
+
+
 def test_deferred_destination_selection_preserves_existing_selection_state():
     previous = apply_destination_change('destination.city', 'AI_DECIDE')
     before = previous.destination.model_dump()

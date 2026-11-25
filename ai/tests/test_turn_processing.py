@@ -86,9 +86,9 @@ def test_text_turn_issues_llm_question_wording_with_canonical_fields():
 
     result = turn(graph, content='Plan a trip', parser=parser)
 
-    assert result.reply == 'Bạn dự định đi vào ngày nào, ngày về nào hoặc trong bao nhiêu ngày?'
+    assert result.reply == 'Bạn muốn đi đâu, hay muốn AI chọn điểm đến?'
     assert result.run.pending_questions[0].question == result.reply
-    assert result.run.pending_questions[0].fields == ['trip.start_date', 'trip.end_date']
+    assert result.run.pending_questions[0].fields == ['destination.selection_mode']
 
 
 def test_intent_change_supersedes_question_without_resetting_budget():

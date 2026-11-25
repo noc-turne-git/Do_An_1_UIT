@@ -22,6 +22,9 @@ def build_orchestrator(settings, *, persistence=None, clarification_policy=None)
         components = runtime_mock_components()
     else:
         components = mock_components()
+    if settings.llm_provider != 'mock':
+        from ai.agents.destination.agent import DestinationAgent
+        components.destination_agent = DestinationAgent(settings)
     return LangGraphOrchestrator(components, defaults=fixture('planner_defaults'),
         clarification_policy=policy, persistence=persistence,
         limits=GraphLimits(**{name: getattr(settings, 'graph_' + name)
@@ -56,7 +59,9 @@ async def run_turn(settings, *, graph=None, history=(), conversation_id=None,
                 history=list(history), request_id=correlation_id, conversation_id=conversation_id,
                 extraction_only=True,
                 pending_question=question.model_dump(mode='json') if question else None,
-                workflow_context=workflow.state.model_dump(mode='json') if workflow else None)
+                workflow_context=(workflow.state.model_dump(mode='json') | {
+                    'destination_conversation': workflow.destination_conversation.model_dump(mode='json')}
+                    if workflow else None))
         except Exception:
             return ParsedTurn(None, error='PARSER_ERROR')
     # A workflow/request can span many user turns. Generate a distinct run ID

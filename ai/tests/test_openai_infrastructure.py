@@ -8,7 +8,7 @@ import httpx
 import pytest
 from openai import AsyncOpenAI
 from openai.types.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ai.agents.contracts import AgentContext, AgentDefinition, AgentStatus
 from ai.agents.llm import LLMRequest
@@ -20,6 +20,7 @@ from ai.config import AISettings as Settings
 
 
 class Value(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     value: int = Field(ge=0)
 
 

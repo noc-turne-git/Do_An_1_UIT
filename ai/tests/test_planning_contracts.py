@@ -284,12 +284,12 @@ def test_workflow_clarification():
         clarification_round=1,max_clarification_rounds=3,pending_fields=["trip.start_date"],retry_count=0)
     restored = WorkflowState.model_validate(data)
     assert restored.destination_round == 0
-    assert restored.max_destination_rounds == 2
+    assert restored.max_destination_rounds == 10
     data["destination_round"] = 2
     data["max_destination_rounds"] = 2
     WorkflowState.model_validate(data)
     data["destination_round"] = 3
-    with pytest.raises(ValidationError): WorkflowState.model_validate(data)
+    assert WorkflowState.model_validate(data).destination_round == 3  # Choices/lowered limits retain history.
     data["destination_round"] = 0
     data["pending_questions"]=[]
     with pytest.raises(ValidationError): WorkflowState.model_validate(data)
@@ -324,7 +324,7 @@ def test_answer_history_kind_is_backward_compatible():
 def test_workflow_state_schema_exports_destination_limits():
     schema = WorkflowState.model_json_schema()
     assert schema["properties"]["destination_round"]["default"] == 0
-    assert schema["properties"]["max_destination_rounds"]["default"] == 2
+    assert schema["properties"]["max_destination_rounds"]["default"] == 10
     schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
     expected = json.dumps(schema, indent=2, ensure_ascii=False) + "\n"
     exported = (Path(__file__).resolve().parents[2] / "shared/schemas/workflow_state.json").read_text(encoding="utf-8")

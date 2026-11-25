@@ -22,7 +22,8 @@ def test_core_mapping():
     for cls, key in [(TripRecord, 'trip_id'), (WorkflowRequestRecord, 'request_id'),
                      (WorkflowArtifactRecord, 'artifact_id')]:
         assert cls.__table__.c[key].type.as_uuid
-    assert WorkflowRequestRecord.__table__.c.max_destination_rounds.server_default.arg.text == '2'
+    assert WorkflowRequestRecord.__table__.c.max_destination_rounds.server_default is None
+    assert WorkflowRequestRecord.__table__.c.max_destination_rounds.default.is_callable
     assert ClarificationRoundRecord.__table__.c.kind.server_default.arg.text == "'trip_request'"
     assert any(set(constraint.columns.keys()) == {'request_id', 'kind', 'round'}
                for constraint in ClarificationRoundRecord.__table__.constraints
@@ -41,7 +42,7 @@ def test_legacy_graph_snapshot_defaults_clarification_kinds():
         declared_unknown_fields=[])])
     restored = GraphRun.model_validate(snapshot)
     assert restored.state.destination_round == 0
-    assert restored.state.max_destination_rounds == 2
+    assert restored.state.max_destination_rounds == 10
     assert restored.answers_history == [AnswerHistory(round=1, kind='trip_request',
         asked_fields=['trip.start_date'], question='Ngày nào?', answer_raw='14/11',
         resolved_fields=['trip.start_date'], declared_unknown_fields=[])]

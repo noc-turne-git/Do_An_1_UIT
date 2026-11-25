@@ -110,7 +110,8 @@ def test_canonical_migration_backfills_round_defaults_and_allows_kind_pair(datab
             {'id': database.pre_upgrade_request_id}).scalar_one() == 'trip_request'
         row = connection.execute(text('''SELECT destination_round, max_destination_rounds
             FROM workflow_requests WHERE request_id=:id'''), {'id': request}).one()
-        assert row == (0, 2)
+        from app.core.config import get_settings
+        assert row == (0, get_settings().max_destination_rounds)
         for kind in ('trip_request', 'destination_choice'):
             connection.execute(text('''INSERT INTO clarification_rounds
                 (request_id, round, kind, asked_fields, question)

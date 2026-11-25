@@ -152,6 +152,20 @@
             }
           ],
           "default": null
+        },
+        "question": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question"
         }
       },
       "required": [
@@ -187,6 +201,20 @@
           "pattern": "\\S",
           "title": "Reason",
           "type": "string"
+        },
+        "question": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question"
         }
       },
       "required": [
@@ -328,7 +356,7 @@
       "anyOf": [
         {
           "enum": [
-            "user",
+            "USER",
             "AGENT_DELEGATED",
             "SYSTEM_DEFAULT"
           ],
@@ -358,6 +386,20 @@
       ],
       "default": null,
       "title": "Selection Method"
+    },
+    "choice_question": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Choice Question"
     }
   },
   "required": [

@@ -10,7 +10,22 @@ from ai.logging import log_execution, traced
 
 
 def strict_schema(schema):
-    # SDK's own conversion preserves $refs, optional fields and nested models.
+    # Reject dynamic maps before the SDK can silently close them.
+    def check(value, path):
+        if isinstance(value, dict):
+            object_shape = (value.get('type') == 'object' or 'properties' in value or
+                            'patternProperties' in value or 'additionalProperties' in value)
+            if object_shape and value.get('additionalProperties') is not False:
+                raise ValueError(f'Incompatible strict JSON Schema at {path}: '
+                                 'object requires additionalProperties=false')
+            for key, child in value.items():
+                check(child, f'{path}/{key}')
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                check(child, f'{path}/{index}')
+
+    check(schema, '$')
+    # SDK's conversion preserves $refs and makes optional fields required.
     from openai.lib._pydantic import _ensure_strict_json_schema
     result = deepcopy(schema)
     return _ensure_strict_json_schema(result, path=(), root=result)

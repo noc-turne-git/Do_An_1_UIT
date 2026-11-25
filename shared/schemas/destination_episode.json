@@ -152,6 +152,20 @@
             }
           ],
           "default": null
+        },
+        "question": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question"
         }
       },
       "required": [
@@ -254,7 +268,7 @@
           "anyOf": [
             {
               "enum": [
-                "user",
+                "USER",
                 "AGENT_DELEGATED",
                 "SYSTEM_DEFAULT"
               ],
@@ -284,6 +298,20 @@
           ],
           "default": null,
           "title": "Selection Method"
+        },
+        "choice_question": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Choice Question"
         }
       },
       "required": [
@@ -323,6 +351,20 @@
           "pattern": "\\S",
           "title": "Reason",
           "type": "string"
+        },
+        "question": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question"
         }
       },
       "required": [
@@ -456,7 +498,7 @@
       "anyOf": [
         {
           "enum": [
-            "user",
+            "USER",
             "AGENT_DELEGATED",
             "SYSTEM_DEFAULT"
           ],
@@ -508,8 +550,8 @@
       "type": "integer"
     },
     "max_destination_rounds": {
-      "default": 2,
-      "maximum": 2,
+      "default": 10,
+      "maximum": 2147483647,
       "minimum": 0,
       "title": "Max Destination Rounds",
       "type": "integer"

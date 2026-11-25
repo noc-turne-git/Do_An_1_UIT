@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import ConfigDict, Field, StrictInt
 
 from shared.contracts import Model, NonEmpty, QuestionKind, TRIP_NEVER_DEFAULT
+from shared.clarification_config import DEFAULT_MAX_DESTINATION_ROUNDS
 
 
 DESTINATION_NEVER_DEFAULT = frozenset({'destination.city'})  # explicit destination branch
@@ -34,7 +35,7 @@ class ApprovedPreferenceDefaults(FrozenConfig):
 
 class ClarificationPolicy(FrozenConfig):
     max_clarification_rounds: Annotated[StrictInt, Field(ge=0)] = 3
-    max_destination_rounds: Annotated[StrictInt, Field(ge=2, le=2)] = 2
+    max_destination_rounds: Annotated[StrictInt, Field(ge=0)] = DEFAULT_MAX_DESTINATION_ROUNDS
     trip_request_defaults: TripRequestDefaults = Field(default_factory=TripRequestDefaults)
     preference_defaults: ApprovedPreferenceDefaults | None = None
 

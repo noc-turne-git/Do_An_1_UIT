@@ -1,7 +1,8 @@
 """AI configuration independent of FastAPI and backend database settings."""
 from pathlib import Path
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from shared.clarification_config import DEFAULT_MAX_DESTINATION_ROUNDS
 from ai.orchestration.clarification_policy import (
     ApprovedPreferenceDefaults, ClarificationPolicy, TripRequestDefaults,
 )
@@ -9,7 +10,9 @@ from ai.orchestration.clarification_policy import (
 class AISettings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
     graph_max_clarifications: int = Field(default=10, ge=0)
-    max_destination_rounds: int = Field(default=10, ge=0, le=10)
+    max_destination_rounds: int = Field(default=DEFAULT_MAX_DESTINATION_ROUNDS, ge=0,
+        validation_alias=AliasChoices('MAX_DESTINATION_ROUNDS', 'GRAPH_MAX_DESTINATION_ROUNDS',
+                                     'max_destination_rounds'))
     clarification_defaults: TripRequestDefaults = Field(default_factory=TripRequestDefaults)
     clarification_preference_defaults: ApprovedPreferenceDefaults | None = None
     graph_max_revisions: int = Field(default=8, ge=0)

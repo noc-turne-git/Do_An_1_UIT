@@ -1,8 +1,7 @@
 """Canonical persistence operations. Caller commits the enclosing transaction.
 
 Graph/Chat adoption is deliberately separate: legacy sync never invents identity.
-Final-resolve claims must commit before invoking the provider; a recovered claim
-is reconciliation work, never permission to execute a second business resolve.
+Historical final-resolve data remains readable but cannot authorize a decision.
 """
 from copy import deepcopy
 from uuid import uuid4
@@ -15,6 +14,7 @@ from app.repositories.workflows import OwnedRepository, RequestRepository
 from shared.contracts import (DestinationEpisode, SelectionPolicy, PendingQuestion,
     AnswerHistory, DestinationResult, Destination, TripRequest)
 from shared.errors import ApplicationError
+from shared.clarification_config import destination_question_allowed
 
 
 def conflict(message):
@@ -110,13 +110,11 @@ class ClarificationRepository(OwnedRepository):
                 return PendingQuestion.model_validate(existing.payload)
             if question.intent_snapshot != episode.selection_policy['selection_intent']:
                 conflict('Question intent snapshot differs from episode')
-            if episode.final_resolve_status != 'not_started':
-                conflict('Final resolve has already been claimed')
             if self.questions(request_id, open_only=True):
                 conflict('An issued question is still open')
             consumed = episode.destination_round if question.counter_group == 'destination' else request.clarification_round
             maximum = episode.max_destination_rounds if question.counter_group == 'destination' else request.max_clarification_rounds
-            if question.round != consumed + 1 or question.round > maximum:
+            if question.round != consumed + 1 or not destination_question_allowed(question.kind, consumed, maximum):
                 conflict('Question round is stale or budget exhausted')
             self.session.add(ClarificationQuestionRecord(question_id=question.question_id,
                 request_id=request_id, episode_id=question.episode_id, kind=question.kind,
@@ -181,26 +179,7 @@ class ClarificationRepository(OwnedRepository):
             return self.contract(episode)
 
     def claim_final_resolve(self, request_id, episode_id, operation_id):
-        with self.session.begin_nested():
-            request = self.request(request_id, lock=True)
-            episode = self.episode(request_id, episode_id)
-            self._active(request, episode)
-            policy = SelectionPolicy.model_validate(episode.selection_policy)
-            if policy.selection_intent != 'ANY_DESTINATION' or policy.selection_authority != 'USER':
-                conflict('Only exhausted ANY_DESTINATION with initial USER authority may claim final resolution')
-            if episode.final_resolve_status != 'not_started':
-                if episode.final_resolve_id != operation_id:
-                    conflict('Final resolve operation already exists')
-                return self.contract(episode), False
-            if self.questions(request_id, open_only=True):
-                conflict('Answer the open question before final resolve')
-            if episode.destination_round != episode.max_destination_rounds:
-                conflict('Final resolve requires exhausted destination budget')
-            episode.final_resolve_status = 'claimed'
-            episode.final_resolve_id = operation_id
-            self.session.flush()
-            self._snapshot(request)
-            return self.contract(episode), True
+        conflict('Question exhaustion no longer authorizes final destination resolution')
 
     def update_policy(self, request_id, episode_id, policy: SelectionPolicy):
         policy = SelectionPolicy.model_validate(policy.model_dump())
@@ -212,7 +191,7 @@ class ClarificationRepository(OwnedRepository):
                 return self.contract(episode)
             self._active(request, episode)
             if payload != episode.selection_policy:
-                if self.questions(request_id, open_only=True) or episode.final_resolve_status == 'claimed':
+                if self.questions(request_id, open_only=True):
                     conflict('Cannot change intent while a question or final resolve is open')
                 episode.selection_policy = payload
                 self.session.flush()
@@ -233,23 +212,7 @@ class ClarificationRepository(OwnedRepository):
             self._snapshot(request)
 
     def complete_final_resolve(self, request_id, episode_id, operation_id, result: DestinationResult):
-        result = DestinationResult.model_validate(result.model_dump()).require_canonical_recovery()
-        with self.session.begin_nested():
-            request = self.request(request_id, lock=True)
-            episode = self.episode(request_id, episode_id)
-            self._active(request, episode)
-            if episode.final_resolve_id != operation_id or episode.final_resolve_status == 'not_started':
-                conflict('Final resolve has no matching claim')
-            payload = result.model_dump(mode='json')
-            if episode.final_resolve_status == 'completed':
-                if episode.final_resolve_result != payload:
-                    conflict('Final resolve result cannot change')
-                return self.contract(episode)
-            episode.final_resolve_status = 'completed'
-            episode.final_resolve_result = payload
-            self.session.flush()
-            self._snapshot(request)
-            return self.contract(episode)
+        conflict('Automatic destination defaults are no longer authorized')
 
     def _snapshot(self, request):
         if request.graph_snapshot is None:

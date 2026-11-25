@@ -16,9 +16,21 @@ def askable_fields(request, kind, fields, *, constraint_proposal=None, parser=Fa
     """Gate collection without changing destination choices or recovery proposals."""
     if kind == 'destination_choice' or constraint_proposal is not None:
         return tuple(fields)
-    return tuple(path for path in fields if (
-        not parser and kind != 'trip_request' and path not in TRIP_COLLECTION_FIELDS
-        or request.should_ask(path)))
+    def askable(path):
+        if parser or kind == 'trip_request' or path in TRIP_COLLECTION_FIELDS:
+            return request.should_ask(path)
+        if path in {'destination.city', 'destination.selection_mode', 'destination.selection_intent'}:
+            return request.should_ask(path)
+        if path in request.meta.field_decisions:
+            return False
+        value = request.model_dump()
+        try:
+            for part in path.split('.'):
+                value = value[int(part)] if isinstance(value, list) else value[part]
+        except (KeyError, TypeError, ValueError, IndexError):
+            return False
+        return value is None or value == '' or value == []
+    return tuple(path for path in fields if askable(path))
 
 
 @dataclass(frozen=True)
@@ -89,11 +101,14 @@ def validate_draft(draft: PendingQuestion, spec: QuestionSpec) -> bool:
 
 def template(spec: QuestionSpec) -> str:
     if spec.kind == 'destination_choice':
-        return 'Bạn muốn chọn điểm đến nào trong các lựa chọn này?'
+        return 'Bạn thích điểm đến nào? Bạn cũng có thể nhờ mình chọn giúp hoặc gợi ý danh sách khác.'
     if spec.constraint_proposal:
         return ('Bạn có đồng ý điều chỉnh các ràng buộc trong đề xuất đính kèm để tìm '
                 'điểm đến phù hợp không?')
-    return 'Vui lòng cho biết: ' + ', '.join(spec.fields) + '.'
+    from ai.orchestration.request_parser import LABELS
+    if all(path in LABELS for path in spec.fields):
+        return ' '.join(LABELS[path] for path in spec.fields)
+    return 'Bạn có thể bổ sung thông tin để mình xác minh điểm đến và tư vấn chính xác hơn không?'
 
 
 def prepare_question(spec: QuestionSpec, *, draft: PendingQuestion | dict | None = None) -> PendingQuestion:
@@ -106,6 +121,18 @@ def prepare_question(spec: QuestionSpec, *, draft: PendingQuestion | dict | None
     return PendingQuestion(question=wording, fields=list(spec.fields), kind=spec.kind,
         options=deepcopy(list(spec.options)),
         constraint_proposal=deepcopy(spec.constraint_proposal))
+
+
+def destination_draft(result: DestinationResult, spec: QuestionSpec) -> PendingQuestion | None:
+    """Agent owns wording; CODE supplies the exact fields, options and proposal."""
+    wording = (result.choice_question if spec.kind == 'destination_choice' else
+        result.recovery.question if result.recovery else
+        next((info.question for info in result.information_requests
+              if info.purpose == spec.kind and tuple(info.fields) == spec.fields), None))
+    if not wording:
+        return None
+    return PendingQuestion(question=wording, fields=list(spec.fields), kind=spec.kind,
+        options=list(spec.options), constraint_proposal=spec.constraint_proposal)
 
 
 def attach_identity(question: PendingQuestion, *, question_id: UUID, episode_id: UUID,

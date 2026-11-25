@@ -15,6 +15,9 @@ class Input(BaseModel):
     model_config = ConfigDict(extra='forbid')
     request: TripRequest
 
+class DestinationInput(Input):
+    context: dict = Field(default_factory=dict)
+
 class PlaceInput(Input):
     destination: DestinationResult
     time_constraints: TimeConstraints
@@ -56,8 +59,8 @@ class RuntimeComponent:
         return result.output
 
 class RuntimeDestinationAgent(RuntimeComponent):
-    async def select(self, request):
-        return await self.execute({'request':request.model_dump(mode='json')})
+    async def select(self, request, *, context=None):
+        return await self.execute({'request':request.model_dump(mode='json'), 'context':context or {}})
 
 class RuntimeRecommendationAgent(RuntimeComponent):
     async def find(self, request, destination, time_constraints, *, max_candidates, exclude_place_ids):
@@ -77,14 +80,14 @@ def runtime_mock_components(*, limits=None):
     destination, recommendation, budget = components.destination_agent, components.place_agent, components.budget_module
     tools, skills = ToolRegistry(), SkillRegistry()
     async def details(data):
-        return await destination.select(data.request)
+        return await destination.select(data.request, context=data.context)
     async def search(data):
         return await recommendation.find(data.request, data.destination, data.time_constraints,
             max_candidates=data.max_candidates, exclude_place_ids=data.exclude_place_ids)
     async def estimate(data):
         return await budget.estimate(data.request, data.places, must_visit_place_ids=data.must_visit_place_ids)
     specs = [
-        ('destination_agent','get_place_details',Input,DestinationResult,details,'destination_research',RuntimeDestinationAgent),
+        ('destination_agent','get_place_details',DestinationInput,DestinationResult,details,'destination_research',RuntimeDestinationAgent),
         ('place_agent','search_places',PlaceInput,list[PlaceCandidate],search,'place_recommendation',RuntimeRecommendationAgent),
         ('budget_module','estimate_place_cost',BudgetInput,BudgetResult,estimate,'budget_analysis',RuntimeBudgetAgent),
     ]

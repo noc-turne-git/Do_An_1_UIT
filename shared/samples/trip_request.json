@@ -3,7 +3,7 @@
   "destination": {
     "selection_intent": "EXPLICIT",
     "selection_authority": "USER",
-    "destination_source": "user",
+    "destination_source": "USER",
     "selection_provenance": {"source": "user", "evidence": "User specified Đà Lạt"},
     "selection_mode": "explicit",
     "city": "Đà Lạt",

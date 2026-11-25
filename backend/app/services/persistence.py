@@ -9,6 +9,7 @@ from app.repositories.artifacts import ArtifactRepository
 from app.repositories.results import ResultRepository
 from app.repositories.places import PlaceRepository
 from ai.logging import log_execution
+from shared.clarification_config import destination_question_allowed
 
 TYPES = dict(request_parser='trip_request', destination_agent='destination_result',
     constraint_planner='time_constraints', place_agent='candidates', budget_module='costed_candidates',
@@ -16,6 +17,29 @@ TYPES = dict(request_parser='trip_request', destination_agent='destination_resul
 
 
 class WorkflowPersistence(OwnedRepository):
+    def configure_destination_limit(self, run, maximum):
+        """The orchestrator supplies the current setting under the issuance lock."""
+        from app.repositories.clarifications import ClarificationRepository
+        repo = ClarificationRepository(self.session, self.user_id)
+        with self.session.begin_nested():
+            request = self.request(run.state.request_id, lock=True)
+            request.max_destination_rounds = maximum
+            episode = None
+            if request.active_episode_id:
+                row = repo.episode(request.request_id)
+                row.max_destination_rounds = maximum
+                episode = repo.contract(row)
+            self.session.flush()
+            if request.active_episode_id:
+                repo._snapshot(request)
+            elif request.graph_snapshot:
+                from copy import deepcopy
+                snapshot = deepcopy(request.graph_snapshot)
+                snapshot['state']['max_destination_rounds'] = maximum
+                request.graph_snapshot = snapshot
+                self.session.flush()
+            return episode
+
     def prepare_turn(self, request, previous, *, trip_id=None, request_id=None):
         from app.repositories.workflows import TripRepository
         if previous:
@@ -45,6 +69,8 @@ class WorkflowPersistence(OwnedRepository):
         repo = ClarificationRepository(self.session, self.user_id)
         row = self.request(run.state.request_id, lock=True)
         if row.active_episode_id:
+            if repo.episode(row.request_id).max_destination_rounds != run.state.max_destination_rounds:
+                return self.configure_destination_limit(run, run.state.max_destination_rounds)
             return repo.contract(repo.episode(row.request_id))
         RequestRepository(self.session, self.user_id).update_projection(run.state)
         return repo.start_episode(row.request_id, policy)
@@ -77,38 +103,15 @@ class WorkflowPersistence(OwnedRepository):
         return ClarificationRepository(self.session, self.user_id).update_policy(
             run.state.request_id, run.state.destination_episode.episode_id, policy)
 
-    def _durable_final_checkpoint(self, run, episode):
-        from ai.orchestration.workflow_state import StateMachine
-        StateMachine(run).update(destination_episode=episode)
-        self.sync(run)
-        self.save_graph(run)
-        # This is a business operation boundary, not a savepoint: a restart must
-        # see the claim even if the provider or a later planning node crashes.
-        try:
-            self.session.commit()
-            log_execution(run_id=run.state.request_id, trip_id=run.state.trip_id,
-                step='persistence.final_checkpoint', event_type='database.transaction', phase='committed',
-                result={'operation': 'final_resolve_checkpoint', 'episode_id': episode.episode_id,
-                        'final_resolve_status': episode.final_resolve_status})
-        except Exception as exc:
-            log_execution(run_id=run.state.request_id, trip_id=run.state.trip_id,
-                step='persistence.final_checkpoint', event_type='database.transaction', phase='failed',
-                error=exc)
-            raise
-
     def claim_final_resolve(self, run, operation_id):
         from app.repositories.clarifications import ClarificationRepository
-        episode, acquired = ClarificationRepository(self.session, self.user_id).claim_final_resolve(
+        return ClarificationRepository(self.session, self.user_id).claim_final_resolve(
             run.state.request_id, run.state.destination_episode.episode_id, operation_id)
-        self._durable_final_checkpoint(run, episode)
-        return episode, acquired
 
     def complete_final_resolve(self, run, operation_id, result):
         from app.repositories.clarifications import ClarificationRepository
-        episode = ClarificationRepository(self.session, self.user_id).complete_final_resolve(
+        return ClarificationRepository(self.session, self.user_id).complete_final_resolve(
             run.state.request_id, run.state.destination_episode.episode_id, operation_id, result)
-        self._durable_final_checkpoint(run, episode)
-        return episode
 
     def answer_question(self, run, answer):
         from app.repositories.clarifications import ClarificationRepository
@@ -151,7 +154,7 @@ class WorkflowPersistence(OwnedRepository):
                        else request.clarification_round)
             maximum = (episode.max_destination_rounds if draft.counter_group == 'destination'
                        else request.max_clarification_rounds)
-            if counter >= maximum:
+            if not destination_question_allowed(draft.kind, counter, maximum):
                 conflict('Question budget exhausted')
             issued = attach_identity(draft, question_id=question_id or uuid4(),
                 episode_id=episode.episode_id, intent_snapshot=episode.selection_intent,

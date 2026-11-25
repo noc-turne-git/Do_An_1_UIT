@@ -79,7 +79,9 @@ def test_any_requires_exhausted_rounds_and_completed_final_resolve():
 
 
 def test_budget_identity_and_final_resolve_invariants():
-    for changes in [dict(destination_round=3), dict(final_resolve_status='claimed'),
+    assert DestinationEpisode(episode_id=uuid4(), request_id=uuid4(),
+        destination_round=12, max_destination_rounds=2).destination_round == 12
+    for changes in [dict(destination_round=-1), dict(final_resolve_status='claimed'),
                     dict(final_resolve_status='completed', final_resolve_id=uuid4()),
                     dict(final_resolve_result=result())]:
         with pytest.raises(ValidationError):

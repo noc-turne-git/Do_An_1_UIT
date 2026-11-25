@@ -25,23 +25,37 @@ class MockRequestParser:
 
 
 class MockDestinationAgent:
-    async def select(self, request):
+    async def select(self, request, *, context=None):
         result = fixture("destination_result")
-        if request.destination.selection_mode == "ambiguous":
-            cities = request.destination.candidate_cities
-            if len(cities) >= 2:
-                result.update(request_type="AMBIGUOUS", selected_region=None,
-                              selection_status="needs_user_choice",
-                              candidate_regions=[dict(city=c, reason="Mock choice",
-                                  candidate_id=f'mock-{index}', rank=index)
-                                  for index, c in enumerate(cities, 1)])
-        elif request.destination.selection_mode == "explicit" and request.destination.city != result["selected_region"]["city"]:
-            raise ApplicationError("mock_fixture_unsupported", "Mock catalog supports only the fixture destination")
+        context = context or {}
+        if request.destination.selection_intent == 'EXPLICIT':
+            if request.destination.city != result['selected_region']['city']:
+                raise ApplicationError("mock_fixture_unsupported", "Mock catalog supports only the fixture destination")
+        elif context.get('delegated_candidate_ids'):
+            candidates = context['conversation']['candidates']
+            candidate = next(c for c in candidates if c['candidate_id'] in context['delegated_candidate_ids'])
+            result.update(selected_region={key: candidate.get(key) for key in ('city', 'province', 'country')},
+                selected_candidate_id=candidate['candidate_id'], selection_reason=candidate['reason'])
+        else:
+            from ai.orchestration.destination_resolution import normalized_text
+            rejected = {normalized_text(c['city']) for c in context.get('conversation', {}).get('rejected_candidates', [])}
+            cities = request.destination.candidate_cities or [result['selected_region']['city']]
+            candidates = [dict(city=c, reason='Có trong dữ liệu gợi ý minh họa.',
+                candidate_id=f'mock-{index}', rank=index)
+                for index, c in enumerate(cities, 1) if normalized_text(c) not in rejected]
+            result.update(request_type='IMPLICIT', selected_region=None,
+                selection_status='needs_user_choice' if candidates else 'no_valid_candidate',
+                candidate_regions=candidates, choice_question=(
+                    'Bạn thích điểm đến nào? Mình cũng có thể chọn giúp hoặc gợi ý lại theo nhu cầu của bạn.'),
+                selection_reason='Danh sách điểm đến minh họa.' if candidates else
+                    'Dữ liệu minh họa hiện chưa có điểm đến khác phù hợp để gợi ý.')
         return DestinationResult.model_validate(result)
 
 
 class MockPlaceAgent:
     async def find(self, request, destination, time_constraints, *, max_candidates, exclude_place_ids):
+        if destination.selected_region.city != fixture('destination_result')['selected_region']['city']:
+            raise ApplicationError('mock_fixture_unsupported', 'Mock places support only the fixture destination')
         return [PlaceCandidate.model_validate(p) for p in fixture("place_candidates")
                 if p["place_id"] not in exclude_place_ids][:max_candidates]
 

@@ -1,47 +1,92 @@
-"""Canonical selection gates. Agent output cannot grant itself authority."""
-from shared.contracts import DestinationResult, Region, TripRequest
+"""Canonical destination gates. Model output cannot grant decision authority."""
+import re
+import unicodedata
+
+from shared.contracts import DestinationResult, TripRequest
 from shared.errors import ApplicationError
 
-ANY_INTENTS = {'ANY_DESTINATION'}
+SUGGESTION_INTENTS = frozenset({'DELEGATE_SELECTION', 'ANY_DESTINATION', 'USER_UNKNOWN'})
 
 
 def reject(message):
     raise ApplicationError('planning_input_inconsistent', message)
 
 
-def can_select(destination):
+def normalized_text(value):
+    text = unicodedata.normalize('NFKD', value.casefold()).replace('đ', 'd')
+    return re.sub(r'\s+', ' ', ''.join(c for c in text if not unicodedata.combining(c))).strip()
+
+
+def region_key(region):
+    # Conversational identity survives optional province/country enrichment.
+    return normalized_text(region.city)
+
+
+def clear_region_fields(payload, fields):
+    """Remove stale geography together with its answer/provenance metadata."""
+    for field in fields:
+        payload['destination'][field] = None
+        for table in ('field_sources', 'field_confidences', 'field_decisions'):
+            payload['meta'].get(table, {}).pop(f'destination.{field}', None)
+
+
+def matches_region_constraints(destination, region):
+    return all(not getattr(destination, field) or
+               getattr(destination, field) == getattr(region, field)
+               for field in ('province', 'country'))
+
+
+def delegates_destination(raw, *, destination_context=True):
+    """Check user language, never an LLM decision or selection_mode.
+
+    Broad preferences such as 'ngân sách bao nhiêu cũng được' grant nothing.
+    """
+    text = normalized_text(raw or '')
+    if re.search(r'\b(?:khong|dung|chua|chang)(?:\s+(?:muon|de|cho|ban|ai|tu))*\s+'
+                 r'(?:chon|quyet dinh|chot)\b|\b(?:not|never|don.t)\s+(?:choose|pick|decide)\b', text):
+        return False
+    clause = r'(?:^|[,.!;]\s*)'
+    ending = r'(?:[.!;,]|$)'
+    requester = r'(?:(?:minh|toi|tui|em|anh|chi)\s+)?(?:(?:nho|de|giao|muon|cu de)\s+)?'
+    courtesy = r'(?:\s+(?:di|nhe|nha|luon|giup|minh|toi|tui|em|anh|chi|ho|cho|thay|a|voi))*'
+    scope = r'(?:\s+(?:diem den|dia diem|thanh pho|noi den|noi di))'
+    if destination_context:
+        scope += '?'
+    patterns = [
+        clause + requester + r'(?:ban|ai)\s+(?:tu\s+)?(?:chon|quyet dinh)'
+        + scope + courtesy + ending,
+        clause + r'(?:dau|noi nao|diem den nao|thanh pho nao)\s+cung duoc' + courtesy + ending,
+        clause + r'(?:any destination|anywhere is fine)' + ending,
+    ]
+    if destination_context:
+        patterns.extend([
+            clause + r'(?:chon|quyet dinh)\s+(?:giup|ho)\s+(?:minh|toi|tui|em|anh|chi)' + courtesy + ending,
+            clause + r'you (?:pick|choose|decide)' + ending,
+        ])
+    return bool(re.search('|'.join(patterns), text))
+
+
+def can_select(destination, *, delegated_candidate_ids=()):
     destination.authority_is_explicit()
-    return ((destination.selection_intent == 'EXPLICIT' and destination.selection_authority == 'USER'
-             and bool(destination.city and destination.city.strip())) or
-            (destination.selection_intent == 'DELEGATE_SELECTION'
-             and destination.selection_authority == 'AGENT'))
+    return bool((destination.selection_intent == 'EXPLICIT'
+                 and destination.selection_authority == 'USER'
+                 and destination.city and destination.city.strip())
+                or (destination.selection_intent == 'DELEGATE_SELECTION'
+                    and destination.selection_authority == 'AGENT'
+                    and delegated_candidate_ids))
 
 
 def can_offer_choice(destination):
-    """A candidate list is actionable only while the USER owns the choice."""
-    return (destination.selection_intent in {'USER_UNKNOWN', 'ANY_DESTINATION'}
-            and destination.selection_authority == 'USER')
+    return destination.selection_intent in SUGGESTION_INTENTS
 
 
-def authorize_selection(request, result, *, final=False, user_choice=False):
-    """Validate a concrete result and stamp its actual decision source."""
+def authorize_selection(request, result, *, user_choice=False, candidates=(),
+                        delegated_candidate_ids=(), final=False):
+    """Stamp the decision source only after validating CODE-owned evidence."""
+    if final:
+        reject('Question exhaustion never authorizes destination selection')
     result = DestinationResult.model_validate(result.model_dump()).require_canonical_recovery()
     destination = request.destination
-    if final:
-        if destination.selection_intent not in ANY_INTENTS or destination.selection_authority != 'USER':
-            reject('Only exhausted ANY_DESTINATION may use SYSTEM_DEFAULT')
-        if result.selection_status not in {'selected', 'needs_user_choice'} or result.missing_fields:
-            reject('Final destination resolution remains unresolved')
-        candidates = [c for c in result.candidate_regions
-                      if c.rank == 1 and c.candidate_id and c.city.strip() and c.reason.strip()]
-        if len(candidates) != 1:
-            reject('Final destination resolution requires a unique valid rank 1')
-        candidate = candidates[0]
-        result = DestinationResult.model_validate(result.model_dump() | dict(
-            selected_region=Region(city=candidate.city, province=candidate.province, country=candidate.country),
-            selection_status='selected', selected_candidate_id=candidate.candidate_id,
-            destination_source='SYSTEM_DEFAULT', selection_method='SYSTEM_DEFAULT'))
-        return result
     if result.selection_status != 'selected' or result.missing_fields:
         reject('Destination has not been resolved')
     region = result.selected_region
@@ -52,39 +97,41 @@ def authorize_selection(request, result, *, final=False, user_choice=False):
             expected = getattr(destination, field)
             if expected and getattr(region, field) != expected:
                 reject('Validated destination differs from the explicit user destination')
-        return DestinationResult.model_validate(result.model_dump() | dict(
-            destination_source='user', selection_method='USER_CHOICE' if user_choice else 'USER_EXPLICIT'))
-    if destination.selection_intent == 'DELEGATE_SELECTION' and destination.selection_authority == 'AGENT':
-        return DestinationResult.model_validate(result.model_dump() | dict(
-            destination_source='AGENT_DELEGATED', selection_method='AGENT_DELEGATED'))
-    if user_choice and can_offer_choice(destination):
-        return DestinationResult.model_validate(result.model_dump() | dict(
-            destination_source='user', selection_method='USER_CHOICE'))
-    reject('Destination selection requires the authority recorded in TripRequest')
+        result.selected_candidate_id = None
+        result.candidate_regions = []
+        source, method = 'USER', 'USER_CHOICE' if user_choice else 'USER_EXPLICIT'
+    elif can_select(destination, delegated_candidate_ids=delegated_candidate_ids):
+        if not matches_region_constraints(destination, region):
+            reject('Delegated destination violates the user geographic constraints')
+        candidate = next((c for c in candidates
+                          if c.candidate_id in delegated_candidate_ids and
+                          all(not getattr(c, field) or getattr(c, field) == getattr(region, field)
+                              for field in ('city', 'province', 'country'))), None)
+        if candidate is None or result.selected_candidate_id not in {None, candidate.candidate_id}:
+            reject('Delegation only authorizes a candidate from the issued list')
+        result.selected_candidate_id = candidate.candidate_id
+        source = method = 'AGENT_DELEGATED'
+    else:
+        reject('Destination selection requires a user choice or a subsequent delegation')
+    return DestinationResult.model_validate(result.model_dump() | dict(
+        destination_source=source, selection_method=method))
 
 
 def apply_resolved_destination(request: TripRequest, result: DestinationResult) -> TripRequest:
-    """Persist a selected city, authority and source in TripRequest."""
     if result.selection_status != 'selected' or result.selected_region is None:
         reject('Only a selected destination can update TripRequest')
     data = request.model_dump()
     destination = data['destination']
     region = result.selected_region
-    # EXPLICIT only freezes what the user supplied.  Resolver enrichment (for
-    # example a province inferred from a city) stays on DestinationResult and
-    # must not become a new user constraint on a later refresh.
     destination['city'] = region.city
     if result.selection_method != 'USER_EXPLICIT':
         destination.update(province=region.province, country=region.country)
-    if result.destination_source == 'user':
-        destination.update(selection_authority='USER', destination_source='user')
-    elif result.destination_source == 'AGENT_DELEGATED':
-        destination.update(selection_authority='AGENT', destination_source='AGENT_DELEGATED')
-    elif result.destination_source == 'SYSTEM_DEFAULT':
-        destination.update(selection_authority='SYSTEM', destination_source='SYSTEM_DEFAULT')
-    else:
-        reject('Selected result has no canonical destination source')
-    if result.destination_source != 'user':
-        data['meta']['field_sources']['destination.city'] = 'inferred'
+    source = result.destination_source
+    if source not in {'USER', 'AGENT_DELEGATED'}:
+        reject('Selected result has no authorized destination source')
+    destination.update(selection_authority='USER' if source == 'USER' else 'AGENT',
+                       destination_source=source)
+    data['meta']['field_sources']['destination.city'] = 'user' if source == 'USER' else 'inferred'
+    if source == 'AGENT_DELEGATED':
         data['meta']['field_confidences']['destination.city'] = 1.0
     return TripRequest.model_validate(data)

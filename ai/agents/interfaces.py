@@ -22,7 +22,7 @@ class RequestParser(Protocol):
 
 
 class DestinationAgent(Protocol):
-    async def select(self, request: TripRequest) -> DestinationResult: ...
+    async def select(self, request: TripRequest, *, context: dict | None = None) -> DestinationResult: ...
 
 
 class ConstraintPlanner(Protocol):

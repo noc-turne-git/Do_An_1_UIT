@@ -7,6 +7,7 @@ import sys
 from ai.logging import state_snapshot, log_state_update
 
 from pydantic import Field
+from shared.clarification_config import destination_question_allowed
 
 from shared.contracts import (
     AnswerHistory, Attempt, BudgetResult, DestinationResult, Itinerary, Model,
@@ -82,6 +83,23 @@ class StateMachine:
         """The sole workflow transition that can consume a clarification slot."""
         from ai.orchestration.clarification_questions import askable_fields, prepare_question, QuestionSpec
 
+        # Apply the same gate for persisted and offline/guest issuance. Only a
+        # newly issued question consumes a slot; an existing question stays valid.
+        if any(q.status == 'open' for q in self.run.pending_questions):
+            if self.persistence is None:
+                existing = next(q for q in self.run.pending_questions if q.status == 'open')
+                proposed = prepare_question(spec, draft=draft)
+                if question_id is not None and existing.question_id == question_id and (
+                        existing.question, existing.fields, existing.kind, existing.options,
+                        existing.constraint_proposal) == (
+                        proposed.question, proposed.fields, proposed.kind, proposed.options,
+                        proposed.constraint_proposal):
+                    return existing
+                raise ValueError('An issued question is still open')
+        elif spec.kind != 'trip_request' and not destination_question_allowed(
+                spec.kind, self.run.state.destination_round, self.run.state.max_destination_rounds):
+            self.update(status='awaiting_relaxation', pending_questions=[], pending_fields=[])
+            return None
         if request is not None and not spec.constraint_proposal and spec.kind != 'destination_choice':
             fields = askable_fields(request, spec.kind, spec.fields,
                                     parser=self.run.state.current_step == 'request_parser')
@@ -108,10 +126,27 @@ class StateMachine:
                 destination_round=episode.destination_round,
                 clarification_round=clarification_round)
             return issued
-        # A draft assembled in memory has no issued identity or budget effect.
-        self.update(status='clarifying', pending_fields=question.fields,
-                    pending_questions=[question])
-        return question
+        # Offline/guest execution has the same actionable contract as persistence.
+        from uuid import uuid4
+        from ai.orchestration.clarification_questions import attach_identity
+        from shared.contracts import DestinationEpisode, SelectionPolicy
+        episode = self.run.state.destination_episode
+        if episode is None:
+            if request is None:
+                raise ValueError('Issuance requires the current TripRequest')
+            episode = DestinationEpisode(episode_id=uuid4(), request_id=self.run.state.request_id,
+                max_destination_rounds=self.run.state.max_destination_rounds,
+                **request.destination.model_dump(include=set(SelectionPolicy.model_fields)))
+        destination_question = question.counter_group == 'destination'
+        counter = episode.destination_round if destination_question else self.run.state.clarification_round
+        issued = attach_identity(question, question_id=question_id or uuid4(),
+            episode_id=episode.episode_id, intent_snapshot=episode.selection_intent, round=counter + 1)
+        if destination_question:
+            episode = episode.model_copy(update={'destination_round': counter + 1})
+        self.update(status='clarifying', pending_fields=issued.fields, pending_questions=[issued],
+            destination_episode=episode, destination_round=episode.destination_round,
+            clarification_round=self.run.state.clarification_round if destination_question else counter + 1)
+        return issued
 
     def clarify(self, fields, *, request=None, draft=None):
         from ai.orchestration.clarification_questions import askable_fields, QuestionSpec

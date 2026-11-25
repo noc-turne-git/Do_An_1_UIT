@@ -1,0 +1,152 @@
+{
+  "$defs": {
+    "CandidateRegion": {
+      "additionalProperties": false,
+      "properties": {
+        "city": {
+          "title": "City",
+          "type": "string"
+        },
+        "province": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Province"
+        },
+        "country": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Country"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidate Id"
+        },
+        "rank": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rank"
+        }
+      },
+      "required": [
+        "city",
+        "reason"
+      ],
+      "title": "CandidateRegion",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "CODE-owned conversation state, persisted with the graph snapshot.",
+  "properties": {
+    "phase": {
+      "default": "consulting",
+      "enum": [
+        "consulting",
+        "awaiting_choice",
+        "resolved"
+      ],
+      "title": "Phase",
+      "type": "string"
+    },
+    "candidates": {
+      "items": {
+        "$ref": "#/$defs/CandidateRegion"
+      },
+      "title": "Candidates",
+      "type": "array"
+    },
+    "candidate_batches": {
+      "items": {
+        "items": {
+          "$ref": "#/$defs/CandidateRegion"
+        },
+        "type": "array"
+      },
+      "title": "Candidate Batches",
+      "type": "array"
+    },
+    "rejected_candidates": {
+      "items": {
+        "$ref": "#/$defs/CandidateRegion"
+      },
+      "title": "Rejected Candidates",
+      "type": "array"
+    },
+    "delegated_candidate_ids": {
+      "items": {
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Delegated Candidate Ids",
+      "type": "array"
+    },
+    "last_feedback": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Feedback"
+    },
+    "decision_source": {
+      "anyOf": [
+        {
+          "enum": [
+            "USER",
+            "AGENT_DELEGATED"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decision Source"
+    }
+  },
+  "title": "DestinationConversation",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -36,7 +36,7 @@
           "anyOf": [
             {
               "enum": [
-                "user",
+                "USER",
                 "AGENT_DELEGATED",
                 "SYSTEM_DEFAULT"
               ],
@@ -336,6 +336,17 @@
         }
       ],
       "default": null
+    },
+    "destination_action": {
+      "default": "none",
+      "enum": [
+        "none",
+        "delegate",
+        "suggest_again",
+        "refine"
+      ],
+      "title": "Destination Action",
+      "type": "string"
     }
   },
   "required": [

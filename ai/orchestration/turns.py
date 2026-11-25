@@ -1,5 +1,6 @@
 """Turn envelopes and lifecycle seeds shared by every transport."""
 from dataclasses import dataclass
+from typing import Literal
 
 from shared.contracts import TripRequest, Destination
 from shared.errors import ApplicationError
@@ -16,8 +17,12 @@ class ParsedTurn:
     reply: str | None = None
     error: str | None = None
     planning: bool = True
+    action: Literal['information', 'destination_recommendation', 'destination_selection',
+                    'selection_delegation', 'itinerary_planning', 'itinerary_modification'] = 'itinerary_planning'
     # Parser-supplied wording proposals; workflow retains field and budget control.
     question_drafts: list[dict] | None = None
+    destination_action: str = 'none'
+    changed_fields: list[str] | None = None
 
 
 @dataclass

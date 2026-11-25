@@ -10,9 +10,8 @@ from app.api.auth import ChatPrincipal, get_chat_principal
 from app.db.models import AnonymousSessionRecord, MessageRecord, ConversationTurnRecord, WorkflowRequestRecord
 from app.db.session import get_session
 from app.services.conversations import ConversationRepository, ConversationWorkflowPersistence
-from app.services.trip_summary import summarize_trip, trip_details
 from shared.contracts import TripRequest, AnswerHistory, PendingQuestion, SelectionPolicy
-from ai.interface import empty_request, run_turn, StaleTurn
+from ai.interface import GraphRun, empty_request, run_turn, StaleTurn
 from ai.logging import log_execution, update_diagnostic_identity
 from app.services.workflow_factory import get_graph_orchestrator
 from ai.orchestration.turns import check_reference
@@ -134,6 +133,8 @@ async def send_message(body: SendMessage, request: Request, principal: ChatPrinc
         if row.graph_snapshot is None:
             raise StaleTurn('Legacy conversation has no resumable graph; history remains available')
         previous_run = persistence.load_graph(conversation.request_id)
+    elif not principal.is_authenticated and conversation.guest_graph_snapshot:
+        previous_run = GraphRun.model_validate(conversation.guest_graph_snapshot)
     check_reference(previous_run, workflow_id=body.workflow_id, episode_id=body.episode_id,
         question_id=body.question_id, answer=body.answer, expected_transitions=body.expected_transitions)
     rows = list(session.scalars(select(MessageRecord).where(
@@ -182,32 +183,22 @@ async def send_message(body: SendMessage, request: Request, principal: ChatPrinc
         request_id=request.state.request_id)
     parsed, reply, error = turn.request or previous, turn.reply, turn.error
     if not principal.is_authenticated:
-        # Guest chats retain their message history and latest extracted request,
-        # but cannot create account-owned trips/workflow artifacts.
+        # Reuse the graph snapshot for guest dialogue without account-owned rows.
         conversation.trip_request = parsed.model_dump(mode='json')
+        conversation.guest_graph_snapshot = turn.run.model_dump(mode='json') if turn.run else None
     if error:
         reply = ('Mình chưa thể phân tích tin nhắn này. Yêu cầu trước đó vẫn được giữ. '
                  'Bạn vui lòng thử lại nhé.')
-    summary_needed = (turn.planning and error is None and parsed.meta.parser_status == 'ready'
-                      and (turn.run is None or turn.run.state.status != 'failed')
-                      and not (turn.run and turn.run.state.status == 'awaiting_relaxation'
-                               and turn.run.errors and '[missing_required_fields]' in turn.run.errors[-1].message)
-                      and not parsed.missing_fields
-                      and (previous.meta.parser_status != 'ready'
-                           or trip_details(previous) != trip_details(parsed)))
     assistant = MessageRecord(message_id=uuid4(), conversation_id=conversation.conversation_id,
                               role='assistant', content=reply or 'Đã ghi nhận.', created_at=datetime.now(timezone.utc))
     session.add(assistant)
     summary = None
-    if summary_needed:
-        summary = MessageRecord(message_id=uuid4(), conversation_id=conversation.conversation_id,
-                                role='assistant', content=summarize_trip(parsed),
-                                created_at=datetime.now(timezone.utc))
-        session.add(summary)
+    # Destination confirmation and source-aware summary are composed by the
+    # graph before planning and delivered together in the assistant message.
     session.flush()
-    # A guest turn may use the graph to compose a reply, but its workflow is
-    # deliberately not durable: trip/workflow tables are account-owned.
-    run = turn.run if principal.is_authenticated else None
+    # Guest identities refer to the conversation snapshot; account-owned
+    # workflow and trip tables are still untouched.
+    run = turn.run
     episode = run.state.destination_episode if run else None
     response = ChatTurnView(**MessageView.model_validate(message).model_dump(),
         assistant=MessageView.model_validate(assistant), parser_status='error' if error else (parsed.meta.parser_status or 'clarifying'),
