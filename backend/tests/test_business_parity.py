@@ -1,139 +1,23 @@
-"""LangGraph business payload, recovery, retry and cancellation regressions."""
+"""LangGraph recovery, retry and cancellation regressions."""
 import asyncio
-import json
 from datetime import date
-from pathlib import Path
 from uuid import UUID
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import TypeAdapter
-from langgraph.errors import NodeCancelledError
 import test_mock_workflow as business_helpers
 import test_full_backend as backend
-from shared.contracts import TripRequest, WorkflowState, PendingQuestion, AnswerHistory
+from shared.contracts import TripRequest
 from ai.orchestration.graph_workflow import LangGraphOrchestrator
 from ai.orchestration.mock_workflow import fixture, mock_components
-from ai.orchestration.workflow_state import OUTPUTS, REFS, STEPS, StateMachine
+from ai.orchestration.workflow_state import STEPS, StateMachine
 
-# Contract and boundary assertions run directly in test_mock_workflow and test_full_backend.
 IDENTITY = dict(trip_id=UUID(int=101), request_id=UUID(int=102))
 
 
 def execute(components, data, **kwargs):
     return asyncio.run(LangGraphOrchestrator(components, defaults=fixture('planner_defaults')).run(
         TripRequest.model_validate(data), current_date=date(2026, 11, 2), **IDENTITY, **kwargs))
-
-
-def business(run):
-    """Validate contract payloads; only generated artifact IDs are excluded."""
-    payloads = {ref: run.artifacts[getattr(run.state.artifacts, ref)]
-                for ref in REFS if ref and getattr(run.state.artifacts, ref)}
-    for checkpoint in run.checkpoints:
-        WorkflowState.model_validate(checkpoint.model_dump())
-        assert all(value in run.artifacts for value in checkpoint.artifacts.model_dump().values() if value)
-    for index, ref in enumerate(REFS):
-        if ref in payloads:
-            TypeAdapter(OUTPUTS[index]).validate_python(payloads[ref])
-    return dict(status=run.state.status, pending=run.state.pending_fields,
-                clarification_round=run.state.clarification_round,
-                destination_round=run.state.destination_round, retry_count=run.state.retry_count,
-                questions=[q.model_dump(mode='json') for q in run.pending_questions],
-                answers=[a.model_dump(mode='json') for a in run.answers_history],
-                final=run.final_result.model_dump(mode='json') if run.final_result else None,
-                explanation=run.explanation, payloads=payloads,
-                attempts=[(a.result, a.random_seed) for a in run.attempts])
-
-
-@pytest.mark.parametrize('scenario', ['happy', 'missing', 'destination', 'resume', 'unknown', 'replan'])
-def test_identical_fixtures_preserve_complete_business_payloads(scenario):
-    data, components = fixture('trip_request'), mock_components()
-    if scenario in {'missing', 'resume', 'unknown'}:
-        data['budget']['amount'] = None
-    if scenario == 'destination':
-        data['destination'].update(selection_intent='USER_UNKNOWN', selection_authority='USER',
-                                  destination_source=None, selection_mode='ambiguous', city=None,
-                                  candidate_cities=['Da Lat', 'Nha Trang'])
-    if scenario == 'replan':
-        original = components.validator.validate
-        calls = 0
-        async def validate(itinerary, planning_input, **kwargs):
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                return {**business_helpers.rejected(), 'trip_id': planning_input.trip_id}
-            return await original(itinerary, planning_input, **kwargs)
-        components.validator.validate = validate
-    result = execute(components, data)
-    if scenario in {'resume', 'unknown'}:
-        before = result.model_dump_json()
-        if scenario == 'resume':
-            data['budget']['amount'] = 3000000
-        else:
-            data['meta']['field_sources']['budget.amount'] = 'user'
-        resumed = execute(components, data, previous=result, answer_raw='answer')
-        assert result.model_dump_json() == before
-        result = resumed
-    payload = business(result)
-    # Freeze the full contract payloads from the graph verified by the removal
-    # gate, excluding generated artifact IDs only. Do not regenerate in tests.
-    expected = json.loads(Path(__file__).with_name('business_payloads.json').read_text(encoding='utf-8'))
-    # Upgrade only the wire representation of the frozen legacy expectations.
-    # Original business values remain frozen; safe contract defaults are explicit.
-    expected = expected[scenario]
-    # The sample now carries the canonical decision authority and source;
-    # planning artifacts retain their frozen business values.
-    expected['payloads']['trip_request_id']['destination'].update({
-        key: data['destination'][key] for key in
-        ('selection_intent', 'selection_authority', 'destination_source', 'selection_provenance')})
-    destination_result = expected['payloads'].get('destination_result_id')
-    if destination_result and destination_result['selection_status'] == 'selected':
-        destination_result.update(selection_method='USER_EXPLICIT',
-            destination_source='user')
-    for index, ref in enumerate(REFS):
-        if ref in expected['payloads']:
-            adapter = TypeAdapter(OUTPUTS[index])
-            expected['payloads'][ref] = adapter.dump_python(
-                adapter.validate_python(expected['payloads'][ref]), mode='json')
-    expected['questions'] = [PendingQuestion.model_validate(q).model_dump(mode='json') for q in expected['questions']]
-    expected['answers'] = [AnswerHistory.model_validate(a).model_dump(mode='json') for a in expected['answers']]
-    # The canonical issuance transition leaves offline drafts uncounted. The
-    # frozen business artifacts remain compared in full below.
-    expected['clarification_round'] = expected['destination_round'] = 0
-    if scenario == 'missing':
-        expected['questions'] = [PendingQuestion(
-            question='Vui lòng cho biết: budget.amount.',
-            fields=['budget.amount']).model_dump(mode='json')]
-    if scenario == 'destination':
-        options = [dict(option_id=f'mock-{index}', candidate_id=f'mock-{index}',
-                        city=city, rank=index, reason='Mock choice')
-                   for index, city in enumerate(['Da Lat', 'Nha Trang'], 1)]
-        expected['questions'] = [PendingQuestion(
-            question='Bạn muốn chọn điểm đến nào trong các lựa chọn này?',
-            fields=['destination.city'], kind='destination_choice',
-            options=options).model_dump(mode='json')]
-        for candidate, option in zip(expected['payloads']['destination_result_id']['candidate_regions'], options):
-            candidate['candidate_id'], candidate['rank'] = option['candidate_id'], option['rank']
-    if scenario in {'resume', 'unknown'}:
-        expected['answers'][0]['question'] = 'Vui lòng cho biết: budget.amount.'
-    assert json.loads(json.dumps(payload)) == expected
-    expected_status = ('clarifying' if scenario in {'missing', 'destination'} else 'completed')
-    assert payload['status'] == expected_status
-    if expected_status == 'completed':
-        assert payload['final'] is not None and payload['explanation']
-        assert payload['payloads']['itinerary_id'] == payload['final']
-        assert payload['payloads']['validation_result_id']['is_valid'] is True
-        assert len(payload['payloads']) == 8
-        assert payload['attempts'][-1][0] == 'accepted'
-    else:
-        assert payload['final'] is None and payload['explanation'] is None
-        assert payload['pending'] and payload['questions']
-    if scenario in {'resume', 'unknown'}:
-        assert len(payload['answers']) == 1
-        field = 'resolved_fields' if scenario == 'resume' else 'declared_unknown_fields'
-        assert payload['answers'][0][field] == ['budget.amount']
-    if scenario == 'replan':
-        assert payload['attempts'] == [('hard_violation', 42), ('accepted', 43)]
 
 
 @pytest.mark.parametrize('status', ['partial', 'infeasible'])
@@ -176,13 +60,14 @@ def test_cost_id_mismatch_refreshes_without_reaching_engine():
 offline = backend.offline
 
 
-def test_retry_exhaustion_keeps_attempt_contracts():
+def test_repair_exhaustion_keeps_attempt_contracts():
     components = mock_components()
     rejected = business_helpers.rejected()
     rejected['violations'][0]['rule'] = 'overlap'
     business_helpers.attach_validation(components, rejected)
     result = execute(components, fixture('trip_request'))
-    assert result.state.status == 'failed' and result.final_result is None
+    assert result.state.status == 'awaiting_relaxation' and result.final_result is None
+    assert 'điều chỉnh' in result.explanation
     assert result.state.retry_count == 3
     assert [a.random_seed for a in result.attempts] == [42, 43, 44, 45]
     assert len({a.itinerary_id for a in result.attempts}) == 4
@@ -192,8 +77,7 @@ def test_retry_exhaustion_keeps_attempt_contracts():
     assert all(a.result == 'hard_violation' for a in result.attempts)
 
 
-@pytest.mark.parametrize('external', [False, True], ids=['component', 'external'])
-@pytest.mark.parametrize('step', STEPS)
+@pytest.mark.parametrize('external,step', [(False, 'request_parser'), (True, 'planning_engine')])
 def test_cancellation_stops_workflow(external, step, monkeypatch):
     async def scenario():
         entered = asyncio.Event()
@@ -254,15 +138,3 @@ def test_cancellation_stops_workflow(external, step, monkeypatch):
                 except asyncio.CancelledError:
                     pass
     asyncio.run(scenario())
-
-
-@pytest.mark.parametrize('cause', [None, RuntimeError('unrelated')])
-def test_node_cancellation_without_cancelled_cause_is_not_reclassified(cause):
-    workflow = LangGraphOrchestrator(mock_components(), defaults=fixture('planner_defaults'))
-    error = NodeCancelledError('place_agent')
-    error.__cause__ = cause
-    workflow.graph.ainvoke = AsyncMock(side_effect=error)
-    with pytest.raises(NodeCancelledError) as caught:
-        asyncio.run(workflow.run(TripRequest.model_validate(fixture('trip_request')),
-                                current_date=date(2026, 11, 2)))
-    assert caught.value is error

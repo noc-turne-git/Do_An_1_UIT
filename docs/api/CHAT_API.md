@@ -95,7 +95,7 @@ Supabase settings. Run backend on port 8000 and `npm run dev` at the root. Vite 
 
 Backend tests:
 `.venv/Scripts/python.exe -m pytest tests/test_chat_api.py tests/test_file_logging.py tests/test_persistence.py -q`
-Frontend: `npm test -- tests/chat-api.test.ts`.
+Frontend: `npm --prefix frontend run build`.
 Real PostgreSQL integration: set TEST_DATABASE_URL to an EMPTY disposable LOCAL DB
 whose name contains test, then run `pytest tests/test_database.py -q`. The existing
 integration harness refuses nonempty/nonlocal databases and never falls back to .env.

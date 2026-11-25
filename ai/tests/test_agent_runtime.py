@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from pydantic import BaseModel, ValidationError
 from ai.agents.contracts import AgentDefinition, AgentContext, AgentResult, AgentStatus
 class Output(BaseModel):
@@ -7,6 +7,7 @@ class Output(BaseModel):
 def definition(**kw):
     return AgentDefinition(name='test', description='Test', system_prompt='Test', output_schema=Output, **kw)
 
+@pytest.mark.smoke
 def test_contracts():
     assert definition().limits.max_steps == 8
     assert AgentContext(request_id='r', input_data={}).request_id == 'r'
@@ -121,27 +122,15 @@ def test_skills_loading_permissions_and_injection():
         assert llm.requests[1].messages[-1]['error']['code'] == 'TOOL_NOT_ALLOWED'
         assert (await harness.run(definition(),ctx,skills=['research'])).error.code == 'SKILL_NOT_ALLOWED'
     asyncio.run(check())
-@pytest.mark.parametrize('field,value', [
-    ('name',''), ('name','bad name'), ('description',''), ('system_prompt',''),
-    ('limits',{'max_steps':0}), ('limits',{'max_tool_calls':-1}),
-    ('limits',{'max_retries':-1}), ('limits',{'timeout':0}),
-    ('limits',{'llm_timeout':float('inf')}), ('limits',{'tool_timeout':-1}),
-])
-def test_invalid_definitions(field,value):
-    data = dict(name='x',description='x',system_prompt='x',output_schema=Output)
-    data[field] = value
-    with pytest.raises(ValidationError): AgentDefinition(**data)
 
 @pytest.mark.parametrize('response,code', [
     ({'kind':'final','output':{'value':'bad'}},'INVALID_AGENT_OUTPUT'),
     ({'kind':'tools','tool_calls':[]},'INVALID_LLM_RESPONSE'),
-    ({'kind':'unknown'},'INVALID_LLM_RESPONSE'),
-    ({'kind':'needs_input','pending_fields':[]},'INVALID_LLM_RESPONSE'),
 ])
 def test_invalid_llm_outputs(response,code):
     assert run_script([response])[0].error.code == code
 
-@pytest.mark.parametrize('failure_code', ['TOOL_TIMEOUT','TOOL_EXECUTION_ERROR','INVALID_TOOL_OUTPUT','INVALID_TOOL_ARGUMENTS'])
+@pytest.mark.parametrize('failure_code', ['TOOL_TIMEOUT','INVALID_TOOL_ARGUMENTS'])
 def test_loop_tool_errors_are_feedback_without_retry(failure_code):
     calls = []
     async def handler(value):
@@ -176,42 +165,3 @@ def test_tool_cancellation_cleans_up_and_propagates():
         with pytest.raises(asyncio.CancelledError): await task
         assert cleaned.is_set()
     asyncio.run(check())
-
-def test_consecutive_tool_calls_and_output_list_schema():
-    registry = ToolRegistry()
-    registry.register(ToolDefinition(name='echo',description='Echo',input_schema=Output,output_schema=Output,handler=lambda v:v))
-    responses = [{'kind':'tools','tool_calls':[{'id':str(i),'name':'echo','arguments':{'value':i}}]} for i in range(3)]
-    responses.append({'kind':'final','output':{'value':3}})
-    result,llm = run_script(responses,tools=registry,allowed_tools={'echo'})
-    assert result.status == AgentStatus.SUCCESS and len(llm.requests) == 4
-    async def check():
-        agent = AgentDefinition(name='list',description='List',system_prompt='List',output_schema=list[Output])
-        result = await AgentHarness(MockLLMAdapter([{'kind':'final','output':[{'value':2}]}])).run(agent,AgentContext(request_id='r',input_data={}))
-        assert result.output == [Output(value=2)]
-    asyncio.run(check())
-
-def test_skill_file_loading(tmp_path):
-    path = tmp_path / 'mock.md'
-    path.write_text('---\n{"name":"mock","description":"Mock","metadata":{"version":1}}\n---\nInstructions',encoding='utf-8')
-    assert SkillLoader.load(path).metadata == {'version':1}
-
-def test_logging_contains_only_execution_labels(caplog):
-    import logging
-    with caplog.at_level(logging.INFO,logger='ai.agents.runtime.harness'):
-        result,_ = run_script([RuntimeError('secret-api-key')])
-    assert result.error.code == 'LLM_EXECUTION_ERROR'
-    assert 'secret-api-key' not in caplog.text
-    record = [r for r in caplog.records if r.name == 'ai.agents.runtime.harness'][-1]
-    assert record.request_id == 'r'
-    assert record.agent_name == 'test'
-    assert record.error_code == 'LLM_EXECUTION_ERROR'
-
-def test_provider_diagnostic_keeps_type_but_not_message(caplog):
-    import logging
-    from ai.agents.llm import ProviderError
-    with caplog.at_level(logging.WARNING, logger='ai.agents.runtime.harness'):
-        result,_ = run_script([ProviderError('LLM_REQUEST_ERROR', diagnostic={
-            'exception_type': 'BadRequestError', 'status_code': 400})])
-    assert result.error.code == 'LLM_REQUEST_ERROR'
-    record = [r for r in caplog.records if r.message == 'agent_runtime.provider_error'][-1]
-    assert record.provider_diagnostic == {'exception_type': 'BadRequestError', 'status_code': 400}

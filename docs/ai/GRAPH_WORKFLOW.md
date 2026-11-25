@@ -13,7 +13,7 @@ from ai.orchestration.mock_workflow import fixture, mock_components
 
 workflow = LangGraphOrchestrator(
     mock_components(), defaults=fixture("planner_defaults"),
-    limits=GraphLimits(max_clarifications=3, max_revisions=8,
+    limits=GraphLimits(max_clarifications=3, max_repair_rounds=3,
                        max_retries=3, max_transitions=80),
 )
 result = await workflow.run(
@@ -103,16 +103,18 @@ Limits persist across explicit resumes:
   `trip.start_date`, `trip.end_date`, `travelers.adults`, and
   `destination.city` when explicit never default; unresolved ones fail. See
   the policy document for children, preferences and budget.
-- Revision counts every invocation of a previously visited component, including
-  downstream rebuilds. No such invocation occurs past `max_revisions`.
+- A repair round starts when Validator requests another itinerary cycle. The
+  third round completes through validation; another failed validation stops
+  with a recovery explanation. User turns and data refreshes do not consume
+  repair rounds. `max_repair_rounds` defaults to 3.
 - Retry counts every Engine invocation after the first. Both `max_retries` and
   the current PlanningInput's solver retry limit apply. Seeds increase across
   both direct replans and full preparation cycles.
-- `max_transitions` bounds total component invocations across runs/resumes.
+- `max_transitions` bounds component invocations within each graph turn.
   `halt` is a terminal bookkeeping node, not another component invocation.
   LangGraph recursion_limit is a secondary guard above this application limit.
 - Search expansion is capped by `max_candidates` (default 400). Exhausting a
-  catalog still ends through revision/transition limits.
+  catalog still ends through transition limits.
 
 The cost routing guard considers only required-place max costs and configured
 overrun allowance. It does not treat the sum of every optional candidate as a

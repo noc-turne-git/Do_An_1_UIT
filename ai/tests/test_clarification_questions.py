@@ -62,38 +62,15 @@ def test_destination_info_can_request_non_destination_fields_and_preserve_propos
                      constraint_proposal=without_original)
 
 
-def test_information_requests_are_separate_purpose_batches():
-    result = DestinationResult(request_type='INSUFFICIENT', selected_region=None,
-        selection_status='needs_more_info', selection_reason='Need details',
-        candidate_regions=[], missing_fields=['trip.start_date', 'budget.amount'],
-        information_requests=[dict(purpose='trip_request', fields=['trip.start_date'], reason='Trip'),
-                              dict(purpose='destination_info', fields=['budget.amount'], reason='Search')])
-    specs = specifications(result)
-    assert [(s.kind, s.fields) for s in specs] == [
-        ('trip_request', ('trip.start_date',)), ('destination_info', ('budget.amount',))]
-    wrong = dict(question='Both', fields=['trip.start_date', 'budget.amount'], kind='trip_request')
-    assert prepare_question(specs[0], draft=wrong).fields == ['trip.start_date']
-    assert prepare_question(specs[0], draft=wrong).question != 'Both'
-
-
-def test_memory_draft_and_validation_do_not_consume_budget():
+def test_issued_destination_question_uses_its_own_budget():
     run = WorkflowRun(state=WorkflowState(request_id=uuid4(), trip_id=uuid4(),
         status='parsing', current_step='request_parser', completed_steps=[],
         artifacts={}, clarification_round=0, destination_round=0,
         pending_fields=[], retry_count=0))
     sm = StateMachine(run)
-    sm.issue_question(choice_spec(), draft={'question': 'invalid', 'fields': [], 'kind': 'trip_request'})
-    assert run.state.destination_round == run.state.clarification_round == 0
-    assert run.pending_questions[0].question_id is None
+    from shared.contracts import TripRequest
+    from support import confirmed_trip_request
+    issued = sm.issue_question(choice_spec(), request=TripRequest.model_validate(confirmed_trip_request()))
+    assert run.state.destination_round == 1 and run.state.clarification_round == 0
+    assert issued.question_id is not None
     assert run.pending_questions[0].options == list(choice_spec().options)
-
-
-def test_identity_attaches_only_after_preparation():
-    spec = choice_spec()
-    draft = prepare_question(spec)
-    issued = attach_identity(draft, question_id=uuid4(), episode_id=uuid4(),
-                             intent_snapshot='USER_UNKNOWN', round=2)
-    assert issued.status == 'open' and issued.round == 2
-    with pytest.raises(ValueError):
-        attach_identity(issued, question_id=uuid4(), episode_id=uuid4(),
-                        intent_snapshot='USER_UNKNOWN', round=2)

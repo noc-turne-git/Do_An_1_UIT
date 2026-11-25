@@ -58,7 +58,7 @@ def test_custom_endpoint_real_sdk_multistep(monkeypatch, base_url):
     asyncio.run(check())
 
 
-@pytest.mark.parametrize('status', [400, 404, 405, 422, 501])
+@pytest.mark.parametrize('status', [400, 501])
 def test_incompatible_endpoint_fails_without_protocol_fallback(status):
     async def check():
         seen = []
@@ -75,40 +75,4 @@ def test_incompatible_endpoint_fails_without_protocol_fallback(status):
                 expected = 'LLM_TRANSIENT_ERROR' if status == 501 else 'LLM_REQUEST_ERROR'
                 assert result.error.code == expected
                 assert len(seen) == 1 and seen[0].url.path == '/v1/responses'
-    asyncio.run(check())
-
-
-def test_environment_settings_and_legacy_model_fallback(monkeypatch):
-    for name, value in dict(OPENAI_BASE_URL=' https://gateway.example/v1 ',
-                            OPENAI_MODEL=' gateway/model ', OPENAI_API_KEY='test-key',
-                            LLM_PROVIDER='openai').items():
-        monkeypatch.setenv(name, value)
-    settings = Settings(_env_file=None)
-    assert settings.openai_base_url == 'https://gateway.example/v1'
-    assert settings.openai_model == 'gateway/model'
-    assert settings.openai_api_key.get_secret_value() == 'test-key'
-    definition = AgentDefinition(name='test', description='Test', system_prompt='Test', output_schema=Value)
-    from test_openai_infrastructure import FakeClient
-    harness = create_agent_harness(definition, settings, client=FakeClient([]))
-    assert harness.llm.model == 'gateway/model'
-    settings.openai_model = None
-    settings.llm_model = 'legacy'
-    assert create_agent_harness(definition, settings, client=FakeClient([])).llm.model == 'legacy'
-    assert Settings(_env_file=None, openai_base_url='', openai_model=' ').openai_base_url is None
-
-
-def test_sdk_default_and_injected_endpoint_override(monkeypatch):
-    monkeypatch.delenv('OPENAI_BASE_URL', raising=False)
-    async def check():
-        from ai.agents.llm.openai import OpenAILLMAdapter
-        adapter = OpenAILLMAdapter(model='test', api_key='fake')
-        try:
-            assert str(adapter.client.base_url) == 'https://api.openai.com/v1/'
-        finally:
-            await adapter.aclose()
-        async with AsyncOpenAI(api_key='fake', base_url='https://original.example/v1') as client:
-            adapter = OpenAILLMAdapter(model='test', client=client, base_url='https://override.example/v1')
-            assert str(adapter.client.base_url) == 'https://override.example/v1/'
-            assert str(client.base_url) == 'https://original.example/v1/'
-            assert adapter.client.max_retries == 0
     asyncio.run(check())

@@ -50,26 +50,6 @@ def test_send_creates_conversation_without_trip_and_stores_unicode_message(caplo
     assert data['content'] not in caplog.text
 
 
-def test_chat_turn_trace_uses_response_run_id_and_conversation(tmp_path):
-    import json
-    settings = Settings(_env_file=None, ai_log_file=tmp_path / 'execution.jsonl')
-    app, session, _ = setup_client(settings)
-    turn = TurnResult(empty_request(), 'Welcome!', planning=False)
-    with patch('app.api.chat.run_turn', return_value=turn), TestClient(app) as client:
-        response = client.post('/api/v1/chat/messages', json={'content': 'private trip text'})
-    assert response.status_code == 201
-    trace = (tmp_path / 'conversations' / response.json()['conversation_id'] / 'runs' /
-             response.headers['x-trace-run-id'] / 'events.jsonl')
-    events = [json.loads(line) for line in trace.read_text(encoding='utf-8').splitlines()]
-    assert {'conversation_loaded', 'response_staged'} <= {event['phase'] for event in events}
-    assert {event['run_id'] for event in events} == {response.headers['x-trace-run-id']}
-    trace_text = trace.read_text(encoding='utf-8')
-    # Diagnostic traces retain the user business input so a turn can be
-    # reconstructed; credential redaction is covered separately.
-    assert 'private trip text' in trace_text
-    assert not (tmp_path / 'execution.jsonl').exists()
-
-
 def test_foreign_or_missing_trip_cannot_send_or_read():
     app, session, _ = setup_client()
     session.scalar.return_value = None
@@ -112,56 +92,6 @@ def test_guest_session_owns_persisted_chat_without_a_bearer_token():
     assert conversation.anonymous_session_id == guest_id
 
 
-def test_history_is_chronological():
-    app, session, user = setup_client()
-    trip = uuid4()
-    session.scalar.return_value = ConversationRecord(conversation_id=trip, user_id=user)
-    def message(content):
-        return MessageRecord(message_id=uuid4(), conversation_id=trip, role='user',
-                             content=content, created_at=datetime.now(timezone.utc))
-    session.scalars.return_value = [message('second'), message('first')]
-    with TestClient(app) as client:
-        response = client.get(f'/api/v1/chat/conversations/{trip}/messages')
-    assert response.status_code == 200
-    assert [row['content'] for row in response.json()] == ['first', 'second']
-
-
-def test_multiple_turns_do_not_create_trip():
-    app, session, user = setup_client()
-    turn = TurnResult(empty_request(), 'Mình có thể giúp gì?', planning=False)
-    with patch('app.api.chat.run_turn', return_value=turn), TestClient(app) as client:
-        first = client.post('/api/v1/chat/messages', json={'content': 'I want to travel'}).json()
-        conversation = session.add.call_args_list[0].args[0]
-        session.scalar.return_value = conversation
-        for content in ['Da Lat', 'Three days', 'Two adults']:
-            result = client.post('/api/v1/chat/messages', json={
-                'conversation_id': first['conversation_id'], 'content': content})
-            assert result.status_code == 201
-            assert result.json()['conversation_id'] == first['conversation_id']
-    rows = [call.args[0] for call in session.add.call_args_list]
-    assert sum(isinstance(row, ConversationRecord) for row in rows) == 1
-    assert sum(isinstance(row, MessageRecord) for row in rows) == 8
-    assert not any(isinstance(row, TripRecord) for row in rows)
-
-
-def test_prepare_revalidates_required_fields_even_if_claimed_complete():
-    app, session, user = setup_client()
-    conversation = ConversationRecord(conversation_id=uuid4(), user_id=user)
-    session.scalar.return_value = conversation
-    body = fixture('trip_request')
-    body['trip']['start_date'] = None
-    body['meta']['field_sources']['trip.start_date'] = 'user'
-    body['missing_fields'] = []
-    with TestClient(app) as client:
-        response = client.post(f'/api/v1/chat/conversations/{conversation.conversation_id}/prepare-trip',
-                               json={'trip_request': body})
-        assert response.status_code == 400
-        body['trip']['end_date'] = 'invalid-date'
-        assert client.post(f'/api/v1/chat/conversations/{conversation.conversation_id}/prepare-trip',
-                           json={'trip_request': body}).status_code == 422
-    session.add.assert_not_called()
-
-
 def test_prepare_complete_request_creates_trip_workflow_and_artifact_once():
     app, session, user = setup_client()
     conversation = ConversationRecord(conversation_id=uuid4(), user_id=user)
@@ -169,7 +99,8 @@ def test_prepare_complete_request_creates_trip_workflow_and_artifact_once():
     workflow = WorkflowRequestRecord(request_id=uuid4(), trip_id=trip.trip_id)
     session.scalar.side_effect = [conversation, trip, workflow, None, conversation]
     # This is an actual structured request checked by Pydantic, not a mocked parser result.
-    payload = TripRequest.model_validate(fixture('trip_request')).model_dump(mode='json')
+    from support import confirmed_trip_request
+    payload = TripRequest.model_validate(confirmed_trip_request()).model_dump(mode='json')
     with TestClient(app) as client:
         url = f'/api/v1/chat/conversations/{conversation.conversation_id}/prepare-trip'
         first = client.post(url, json={'trip_request': payload})

@@ -50,7 +50,7 @@ class DataRequirement(Exception):
 
 class GraphLimits(Model):
     max_clarifications: int = Field(default=3, ge=0)
-    max_revisions: int = Field(default=8, ge=0)
+    max_repair_rounds: int = Field(default=3, ge=0)
     max_retries: int = Field(default=3, ge=0)
     max_transitions: int = Field(default=80, ge=1)
     max_candidates: int = Field(default=400, ge=100)
@@ -65,6 +65,7 @@ class GraphRun(WorkflowRun):
     transitions: int = 0
     turn_start_transitions: int = 0
     revisions: int = 0
+    repair_rounds: int = 0
     retries: int = 0
     last_random_seed: int | None = None
     route_provider: str | None = None
@@ -168,8 +169,6 @@ class LangGraphOrchestrator:
                 target = next((s for s in STEPS if s not in o), END)
         if target == END:
             return route(END, 'all_steps_complete')
-        if r.visits.get(target, 0) and r.revisions >= self.limits.max_revisions:
-            return route('halt', 'revision_limit')
         if target == "planning_engine" and r.visits.get(target, 0):
             maximum = min(self.limits.max_retries, r.outputs["planning_input_builder"].solver_config.max_retries)
             if r.retries >= maximum:
@@ -181,7 +180,7 @@ class LangGraphOrchestrator:
     async def _halt(self, state):
         r = state["run"].model_copy(deep=True)
         reason = r.stop_reason or ("transition_limit" if r.transitions - r.turn_start_transitions >= self.limits.max_transitions
-                                  else "retry_or_revision_limit")
+                                  else "retry_limit")
         StateMachine(r).fail(r.state.current_step, reason, "Workflow stopped at configured limit")
         r.final_result = None
         r.explanation = None
@@ -244,7 +243,11 @@ class LangGraphOrchestrator:
             reason = r.route_reason
             r.route_provider = r.route_reason = None
             refs_before = r.state.artifacts.model_dump(mode="json")
-            removed = self._invalidate(r, step)
+            preserve_destination = (step == 'request_parser' and r.resolved_destination is not None
+                and 'destination_agent' in r.outputs
+                and state.get('destination_action', 'none') == 'none'
+                and self._has_resolved_destination(r, state['request']))
+            removed = self._invalidate(r, 'constraint_planner' if preserve_destination else step)
             sm.update(current_step=step, status="parsing" if step == "request_parser" else
                       "validating" if step in {"validator", "explainer"} else "planning")
             event = dict(event="node", step=step, visit=r.visits[step], reason=reason,
@@ -349,6 +352,7 @@ class LangGraphOrchestrator:
             except InvalidAnswer as exc:
                 # No accepted answer, no counter/default/final-resolve transition.
                 r = state['run'].model_copy(deep=True)
+                r.explanation = str(exc)
                 StateMachine(r).update(status='clarifying')
                 event['exception'] = {'type': 'InvalidAnswer', 'handling': 'restore_clarifying'}
                 log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
@@ -365,6 +369,8 @@ class LangGraphOrchestrator:
                     sm.fail(step, "invalid_dependency", "Provider must be an upstream module")
                 else:
                     r.route_provider, r.route_reason = exc.provider, exc.reason
+                    if exc.provider == 'destination_agent':
+                        r.resolved_destination = None
                     r.exclude_place_ids = list(dict.fromkeys([*r.exclude_place_ids, *exc.exclude_place_ids]))
                     event["requirement"] = dict(provider=exc.provider, reason=exc.reason)
                 log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
@@ -407,7 +413,7 @@ class LangGraphOrchestrator:
                     input={'node': step, 'state': state})
             log_execution(run_id=r.state.request_id, trip_id=r.state.trip_id, step=step,
                 event_type='workflow.node', phase='completed',
-                result={'status': r.state.status, 'visit': r.visits[step],
+                result={'status': r.state.status, 'visit': r.visits.get(step, 0),
                         'output': r.outputs.get(step), 'event': event, 'state_after': r.state,
                         'route_provider': r.route_provider, 'route_reason': r.route_reason},
                 error='workflow_failed' if r.state.status == 'failed' else None)
@@ -783,7 +789,13 @@ class LangGraphOrchestrator:
             elif value.suggested_action == "fail":
                 sm.fail(step, "validation_rejected", "Validator rejected itinerary")
             elif value.suggested_action == "replan":
-                r.route_reason = "validator_replan:" + ",".join(v.rule for v in value.violations)
+                if r.repair_rounds >= self.limits.max_repair_rounds:
+                    r.explanation = ('Lịch trình vẫn không đạt kiểm tra sau số lần sửa cho phép. '
+                        'Bạn có thể điều chỉnh các yêu cầu chuyến đi.')
+                    sm.update(status='awaiting_relaxation')
+                else:
+                    r.repair_rounds += 1
+                    r.route_reason = "validator_replan:" + ",".join(v.rule for v in value.violations)
         elif step == "explainer":
             r.explanation = value
             r.final_result = o["planning_engine"].model_copy(deep=True)
@@ -900,7 +912,8 @@ class LangGraphOrchestrator:
                 if self.persistence:
                     self.persistence.supersede_questions(previous)
                 StateMachine(previous).update(pending_questions=[], pending_fields=[])
-            if previous.state.status == 'completed':
+            if (previous.state.status == 'completed'
+                    and not self._has_resolved_destination(previous, request)):
                 if self.persistence:
                     episode = self.persistence.restart_completed_episode(previous, request)
                 else:
@@ -943,6 +956,8 @@ class LangGraphOrchestrator:
                      'mặc định phù hợp. Quyết định của bạn đã được giữ lại.')
         elif run.state.status == 'failed':
             reply = 'Không thể hoàn tất yêu cầu này. Bạn có thể gửi một điểm đến mới để bắt đầu yêu cầu mới.'
+        elif run.state.status == 'awaiting_relaxation' and run.explanation:
+            reply = run.explanation
         elif run.state.status == 'awaiting_relaxation' and 'destination_agent' in run.outputs:
             reply = run.outputs['destination_agent'].selection_reason
         else:
@@ -950,7 +965,9 @@ class LangGraphOrchestrator:
         if run.destination_confirmation:
             reply = run.destination_confirmation + ('\n\n' + reply if run.pending_questions
                 or run.state.status in {'failed', 'awaiting_relaxation'} else '')
-        return TurnResult(value, reply, run=run)
+        return TurnResult(value, reply,
+            'INVALID_ANSWER' if run.state.status == 'clarifying' and run.explanation else None,
+            run=run)
 
     async def run(self, request: TripRequest, **kwargs):
         """Compatibility adapter; all scheduling remains in run_turn."""
@@ -1035,6 +1052,7 @@ class LangGraphOrchestrator:
                 # workflow. Audit history and the transition revision stay intact.
                 r.visits = {}
                 r.revisions = 0
+                r.repair_rounds = 0
                 r.retries = 0
                 r.stop_reason = None
                 r.candidate_limit = 100
@@ -1043,6 +1061,7 @@ class LangGraphOrchestrator:
             if answer_raw is not None:
                 r.visits = {}
                 r.revisions = 0
+                r.repair_rounds = 0
                 r.retries = 0
                 r.turn_start_transitions = r.transitions
                 r.stop_reason = None

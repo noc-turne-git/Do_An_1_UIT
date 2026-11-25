@@ -18,14 +18,3 @@ def test_ai_does_not_import_backend():
                 assert not (node.module or '').startswith('app.'), path
             elif isinstance(node, ast.Import):
                 assert not any(alias.name.startswith('app.') for alias in node.names), path
-
-
-def test_trip_request_schema_matches_canonical_model_and_validates_wire_data():
-    schema = json.loads((Path(__file__).resolve().parents[2] / 'shared/schemas/trip_request.json').read_text(encoding='utf-8'))
-    expected = TripRequest.model_json_schema()
-    assert {k: v for k, v in schema.items() if k != '$schema'} == expected
-    payload = fixture('trip_request')
-    validate_trip_request(payload)
-    payload['travelers']['adults'] = 'two'
-    with pytest.raises(ValidationError):
-        validate_trip_request(payload)

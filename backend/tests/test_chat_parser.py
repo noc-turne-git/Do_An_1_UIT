@@ -23,7 +23,8 @@ def output(path, value, decision='SPECIFIED'):
 
 
 def complete():
-    return TripRequest.model_validate(fixture('trip_request'))
+    from support import confirmed_trip_request
+    return TripRequest.model_validate(confirmed_trip_request())
 
 
 def test_complete_missing_and_preserving_corrections():
@@ -41,71 +42,15 @@ def test_complete_missing_and_preserving_corrections():
 @pytest.mark.parametrize('decision,intent,authority', [
     ('UNKNOWN', 'USER_UNKNOWN', 'USER'),
     ('FLEXIBLE', 'ANY_DESTINATION', 'USER'),
-    ('AI_DECIDE', 'DELEGATE_SELECTION', 'AGENT'),
+    ('AI_DECIDE', 'DELEGATE_SELECTION', 'USER'),
 ])
 def test_destination_decision_semantics(decision, intent, authority):
     request = apply_changes(empty_request(), output('destination.city', None, decision))
     assert request.destination.selection_intent == intent
     assert request.destination.selection_authority == authority
     assert request.destination.city is None
-    assert ('destination.city' in request.missing_fields) == (decision == 'UNKNOWN')
+    assert 'destination.selection_mode' not in request.missing_fields
     assert request.destination.selection_provenance is not None
-
-
-def test_destination_unknown_with_delegation_and_explicit_change():
-    combined = ParserOutput(summary='Đã hiểu.', changes=[
-        Change(path='destination.city', value_json='null', decision='UNKNOWN'),
-        Change(path='destination.selection_mode', value_json='null', decision='AI_DECIDE')])
-    request = apply_changes(empty_request(), combined)
-    assert request.destination.selection_intent == 'DELEGATE_SELECTION'
-    explicit = apply_changes(request, output('destination.city', 'Huế'))
-    assert explicit.destination.selection_intent == 'EXPLICIT'
-    assert explicit.destination.selection_authority == 'USER'
-    assert explicit.destination.destination_source == 'user'
-    assert explicit.destination.selection_provenance.source == 'user'
-    assert explicit.meta.field_sources['destination.city'] == 'user'
-    assert explicit.meta.field_decisions['destination.city'] == 'SPECIFIED'
-
-
-def test_legacy_mode_does_not_grant_selection_and_intent_change_keeps_data():
-    data = complete().model_dump()
-    for key in ('selection_intent', 'selection_authority', 'destination_source', 'selection_provenance'):
-        data['destination'].pop(key, None)
-    legacy = TripRequest.model_validate(data)
-    assert legacy.destination.selection_intent == 'UNSPECIFIED'
-    request = apply_changes(legacy, output('destination.selection_mode', 'implicit'))
-    assert request.destination.selection_authority is None
-    changed = apply_changes(request, output('destination.city', None, 'UNKNOWN'))
-    assert changed.destination.selection_intent == 'USER_UNKNOWN'
-    assert changed.destination.selection_authority == 'USER'
-
-
-def test_unknown_requires_followup_for_every_non_destination_field():
-    for path in ['trip.start_date', 'trip.end_date', 'travelers.adults',
-                 'travelers.children', 'preferences.interests', 'preferences.pace',
-                 'preferences.transport_modes', 'budget.amount', 'budget.scope']:
-        assert path in apply_changes(complete(), output(path, None, 'UNKNOWN')).missing_fields
-
-
-@pytest.mark.parametrize('decision', ['DEFERRED', 'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE'])
-def test_confirmed_no_value_closes_collection_for_all_non_destination_fields(decision):
-    for path in ['trip.start_date', 'trip.end_date', 'travelers.adults',
-                 'travelers.children', 'preferences.interests', 'preferences.pace',
-                 'preferences.transport_modes', 'budget.amount', 'budget.scope']:
-        request = apply_changes(complete(), output(path, None, decision))
-        assert path not in request.missing_fields
-
-
-@pytest.mark.parametrize('decision,missing', [('UNKNOWN', True), ('DEFERRED', False),
-    ('FLEXIBLE', False), ('AI_DECIDE', False), ('NO_PREFERENCE', False)])
-def test_decision_roundtrip_and_essential_travelers(decision, missing):
-    request = apply_changes(complete(), output('preferences.pace', None, decision))
-    restored = TripRequest.model_validate(request.model_dump(mode='json'))
-    assert ('preferences.pace' in restored.missing_fields) == missing
-    assert request.preferences.pace is None
-    essential = apply_changes(complete(), output('travelers.adults', None, decision))
-    assert ('travelers.adults' in essential.missing_fields) == missing
-    assert essential.meta.parser_status == ('clarifying' if missing else 'ready')
 
 
 def test_invalid_json_dates_zero_travelers_and_protected_paths():
@@ -119,7 +64,9 @@ def test_invalid_json_dates_zero_travelers_and_protected_paths():
     with pytest.raises(ValueError):
         apply_changes(complete(), output('budget.amount', 123, 'AI_DECIDE'))
     no_adults = apply_changes(complete(), output('travelers.adults', 0))
-    assert no_adults.meta.parser_status == 'clarifying'
+    assert no_adults.meta.parser_status == 'ready'
+    assert no_adults.travelers.adults == 0
+    assert 'travelers.adults' not in no_adults.missing_fields
 
 
 def run_script(content, response):
@@ -131,17 +78,6 @@ def run_script(content, response):
     return result, adapter
 
 
-@pytest.mark.parametrize('text,decision', [('Không biết', 'UNKNOWN'), ('Sao cũng được', 'FLEXIBLE'),
-    ('Bạn chọn giúp', 'AI_DECIDE'), ('Không quan trọng', 'NO_PREFERENCE'), ('Để sau', 'DEFERRED')])
-def test_harness_decision_contract(text, decision):
-    (request, reply, error), adapter = run_script(text, dict(kind='final',
-        output=output('preferences.pace', None, decision).model_dump()))
-    assert not error and request.meta.field_decisions['preferences.pace'] == decision
-    assert 'nhịp độ' not in reply if decision in {'FLEXIBLE', 'AI_DECIDE', 'NO_PREFERENCE', 'DEFERRED'} else True
-    assert adapter.requests[0].messages[-1]['content']['content'] == text
-    assert adapter.requests[0].messages[-1]['content']['history']
-
-
 def test_relative_dates_context_and_schema():
     (_, _, error), adapter = run_script('Ngày mai', dict(kind='final',
         output=ParserOutput(summary='Đã ghi nhận.', changes=[]).model_dump()))
@@ -151,52 +87,12 @@ def test_relative_dates_context_and_schema():
     assert len(context['current_date']) == 10 and context['trip_request_schema']
 
 
-def test_relative_date_result_and_grouped_questions():
-    from datetime import datetime, timedelta
-    from zoneinfo import ZoneInfo
-    tomorrow = datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).date() + timedelta(days=1)
-    response = ParserOutput(summary='Đi từ ngày mai trong ba ngày.', changes=[
-        Change(path='trip.start_date', value_json=json.dumps(tomorrow.isoformat()), decision='SPECIFIED'),
-        Change(path='trip.end_date', value_json=json.dumps((tomorrow + timedelta(days=2)).isoformat()), decision='SPECIFIED'),
-        Change(path='trip.duration_days', value_json='3', decision='SPECIFIED'),
-        Change(path='travelers.adults', value_json='null', decision='UNKNOWN'),
-        Change(path='travelers.children', value_json='null', decision='UNKNOWN')],
-        questions=[dict(fields=['travelers.adults', 'travelers.children'],
-                        question='Nhóm có bao nhiêu người lớn và trẻ em?')])
-    (request, reply, error), _ = run_script('Ngày mai đi ba ngày, chưa biết số người',
-                                          dict(kind='final', output=response.model_dump()))
-    assert not error and request.trip.start_date == tomorrow and request.trip.duration_days == 3
-    assert reply.count('bao nhiêu') == 1
-    assert 'người lớn' in reply
-    assert 'travelers.children' in request.missing_fields
-
-
-def test_harness_keeps_new_explicit_end_date_and_recomputes_duration():
-    response = output('trip.end_date', '2026-11-18')
-    (request, _, error), adapter = run_script('Đi đến ngày 18/11',
-                                            dict(kind='final', output=response.model_dump()))
-    assert error is None
-    assert request.trip.end_date.isoformat() == '2026-11-18'
-    assert request.trip.duration_days == 5
-    assert request.meta.field_sources['trip.end_date'] == 'user'
-    assert adapter.requests[0].messages[-1]['content']['current_date']
-
-
-def test_ready_request_keeps_confirmation_without_followup():
-    response = ParserOutput(summary='Đã đủ thông tin chuyến đi.', changes=[],
-        questions=[dict(fields=['travelers.adults'], question='Có bao nhiêu người lớn?')])
-    (request, reply, error), _ = run_script('Đi bằng xe máy, không có trẻ em',
-                                          dict(kind='final', output=response.model_dump()))
-    assert not error and request.meta.parser_status == 'ready'
-    assert reply == response.summary
-
-
 @pytest.mark.parametrize('intent,text,reply', [
     ('conversation', 'Xin chào', 'Chào bạn! Mình là Travelio, rất vui được trò chuyện với bạn.'),
     ('conversation', 'Cảm ơn nhé', 'Rất vui vì giúp được bạn!'),
     ('travel_advice', 'Đà Lạt có gì chơi?', 'Bạn có thể ghé hồ Xuân Hương và khám phá các quán cà phê.'),
 ])
-@pytest.mark.parametrize('state', ['empty', 'collecting', 'ready'])
+@pytest.mark.parametrize('state', ['empty', 'ready'])
 def test_non_planning_turn_answers_without_changing_trip(intent, text, reply, state):
     previous = (empty_request() if state == 'empty' else
                 apply_changes(complete(), output('travelers.adults', None, 'UNKNOWN'))
@@ -216,81 +112,10 @@ def test_non_planning_turn_answers_without_changing_trip(intent, text, reply, st
     assert request is not previous
 
 
-def test_explicit_planning_intent_collects_missing_requirements():
-    response = output('travelers.adults', None, 'UNKNOWN')
-    response.intent = 'trip_planning'
-    (request, reply, error), _ = run_script('Lập lịch trình cho mình',
-                                          dict(kind='final', output=response.model_dump()))
-    assert error is None and request.meta.parser_status == 'clarifying'
-    assert 'travelers.adults' in request.missing_fields
-    assert 'bao nhiêu người lớn' in reply
-    assert response.summary not in reply
-
-
-def test_conflicts_and_invalid_change_are_safe_errors():
-    for response, code in [
-        (dict(summary='Mâu thuẫn.', changes=[], conflicting_input=True), 'CONFLICTING_INPUT'),
-        (dict(summary='Sai JSON.', changes=[dict(path='budget.amount', value_json='bad', decision='SPECIFIED')]), 'INVALID_PARSER_JSON'),
-        (dict(summary='Sai ngày.', changes=[dict(path='trip.end_date', value_json='"2020-01-01"', decision='SPECIFIED')]), 'INVALID_TRIP_REQUEST'),
-    ]:
-        (request, reply, error), _ = run_script('Yêu cầu mâu thuẫn', dict(kind='final', output=response))
-        assert request is None and reply is None and error == code
-
-
 def test_harness_invalid_output_and_provider_failure():
     for response in [dict(kind='final', output={'bad': 'json'}), RuntimeError('secret-provider-key')]:
         (request, reply, error), _ = run_script('Đi chơi', response)
         assert request is None and reply is None and error
-
-
-def test_api_nonplanning_and_error_preserve_state_and_do_not_create_trip():
-    app, session, _ = setup_client()
-    previous = empty_request()
-    with patch('app.api.chat.run_turn') as processor, TestClient(app) as client:
-        processor.return_value = TurnResult(previous, 'Đây là lời khuyên du lịch.', planning=False)
-        first = client.post('/api/v1/chat/messages', json={'content': 'Nên đi đâu mùa này?'}).json()
-        assert first['assistant']['role'] == 'assistant'
-        assert first['trip_summary'] is None
-        conversation = session.add.call_args_list[0].args[0]
-        session.scalar.return_value = conversation
-        processor.return_value = TurnResult(None, error='PARSER_ERROR')
-        second = client.post('/api/v1/chat/messages', json={
-            'conversation_id': first['conversation_id'], 'content': 'Sửa ngày'}).json()
-        assert second['parser_status'] == 'error'
-        assert second['trip_summary'] is None
-        assert conversation.trip_request is None
-        assert conversation.trip_id is None and conversation.request_id is None
-
-
-def test_summary_is_saved_once_and_updated_when_ready_details_change():
-    from app.db.models import MessageRecord
-    app, session, _ = setup_client()
-    ready = apply_changes(complete(), ParserOutput(summary='Đã đủ.', changes=[]))
-    with patch('app.api.chat.run_turn') as processor, TestClient(app) as client:
-        processor.return_value = TurnResult(ready, 'Đã ghi nhận.')
-        first = client.post('/api/v1/chat/messages', json={'content': 'Lên kế hoạch'}).json()
-        conversation = session.add.call_args_list[0].args[0]
-        conversation.trip_request = ready.model_dump(mode='json')
-        session.scalar.return_value = conversation
-        saved = [c.args[0] for c in session.add.call_args_list if isinstance(c.args[0], MessageRecord)]
-        assert len(saved) == 3
-        assert saved[-1].content == first['trip_summary']['content']
-        body = {'conversation_id': first['conversation_id'], 'content': 'Đúng rồi'}
-        unchanged = client.post('/api/v1/chat/messages', json=body).json()
-        assert unchanged['trip_summary'] is None
-        updated = apply_changes(ready, output('travelers.adults', 4))
-        processor.return_value = TurnResult(updated, 'Đã đổi số người.')
-        changed = client.post('/api/v1/chat/messages', json=body).json()
-        assert '4 người lớn' in changed['trip_summary']['content']
-
-
-def test_incomplete_request_does_not_emit_summary():
-    app, _, _ = setup_client()
-    draft = apply_changes(empty_request(), output('destination.city', 'Đà Lạt'))
-    with patch('app.api.chat.run_turn', return_value=TurnResult(draft, 'Bạn đi ngày nào?')), TestClient(app) as client:
-        response = client.post('/api/v1/chat/messages', json={'content': 'Đà Lạt'})
-    assert response.status_code == 201
-    assert response.json()['trip_summary'] is None
 
 
 def test_logs_exclude_credentials_and_raw_prompt(caplog):

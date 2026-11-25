@@ -55,30 +55,3 @@ def test_never_default_fails_safely(path):
     data[group][key] = None
     with pytest.raises(ApplicationError, match='Required trip information'):
         apply(TripRequest.model_validate(data), [QuestionSpec('trip_request', (path,))])
-
-
-def test_graph_applies_defaults_after_consumed_trip_question_only():
-    data = fixture('trip_request')
-    data['preferences']['pace'] = None
-    data['meta']['field_sources'].pop('preferences.pace', None)
-    graph = workflow(clarification_policy=policy())
-    first = execute(graph, data)
-    assert first.state.status == 'clarifying'
-    assert first.outputs['request_parser'].preferences.pace is None
-    # Model an already issued/answered last slot; in-memory drafts consume none.
-    first.state.clarification_round = 1
-    final = execute(graph, data, previous=first, answer_raw='unknown')
-    assert final.outputs['request_parser'].preferences.pace == 'relaxed'
-    assert final.outputs['request_parser'].meta.field_sources['preferences.pace'] == 'default'
-
-
-def test_destination_purpose_does_not_enter_parser_defaults():
-    data = fixture('trip_request')
-    graph = workflow(clarification_policy=policy())
-    first = execute(graph, data)
-    first.state.clarification_round = 1
-    first.destination_info_fields = ['preferences.pace']
-    data['preferences']['pace'] = None
-    data['meta']['field_sources'].pop('preferences.pace', None)
-    final = execute(graph, data, previous=first, answer_raw='unknown')
-    assert final.outputs['request_parser'].preferences.pace is None

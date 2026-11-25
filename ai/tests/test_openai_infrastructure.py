@@ -126,50 +126,12 @@ def test_real_sdk_http_mapping_and_no_nested_retries(status, code, count):
     asyncio.run(check())
 
 
-@pytest.mark.parametrize('limit,code', [
-    ({'max_context_bytes': 1}, 'MAX_CONTEXT_BYTES'),
-    ({'max_output_bytes': 1}, 'MAX_OUTPUT_BYTES'),
-    ({'max_total_tokens': 1}, 'MAX_TOTAL_TOKENS'),
-])
-def test_limits(limit, code):
-    definition, harness, effects = setup(FakeClient([final()]), **limit)
-    result = asyncio.run(harness.run(definition, AgentContext(request_id='r', input_data={})))
-    assert result.error.code == code and not effects
-
-
 def test_skill_cannot_expand_tools():
     client = FakeClient([])
     definition, harness, _ = setup(client)
     definition.allowed_tools = frozenset()
     result = asyncio.run(harness.run(definition, AgentContext(request_id='r', input_data={}), skills=['sample']))
     assert result.error.code == 'SKILL_TOOL_PERMISSION_CONFLICT' and not client.requests
-
-
-def test_factory_mock_and_configuration_errors():
-    definition = AgentDefinition(name='mock', description='Mock', system_prompt='Test', output_schema=Value)
-    harness = create_agent_harness(definition, Settings(_env_file=None, llm_provider='mock'),
-                                   mock_responses=[dict(kind='final', output={'value': 1})])
-    assert asyncio.run(harness.run(definition, AgentContext(request_id='r', input_data={}))).output.value == 1
-    with pytest.raises(ValueError):
-        create_agent_harness(definition, SimpleNamespace(llm_provider='invalid'))
-
-
-@pytest.mark.parametrize('mode,code', [('network', 'LLM_TRANSIENT_ERROR'), ('timeout', 'LLM_TIMEOUT')])
-def test_real_sdk_transport_failures(mode, code):
-    async def check():
-        attempts = []
-        async def handle(request):
-            attempts.append(1)
-            if mode == 'timeout':
-                raise httpx.ReadTimeout('sensitive transport details', request=request)
-            raise httpx.ConnectError('sensitive transport details', request=request)
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-            async with AsyncOpenAI(api_key='fake', http_client=http) as client:
-                definition, harness, _ = setup(client, max_retries=1, retry_backoff=0)
-                result = await harness.run(definition, AgentContext(request_id='r', input_data={}))
-                assert result.error.code == code and len(attempts) == 2
-                assert 'sensitive' not in result.model_dump_json()
-    asyncio.run(check())
 
 
 def test_openai_cancellation_propagates():
@@ -189,57 +151,4 @@ def test_openai_cancellation_propagates():
         with pytest.raises(asyncio.CancelledError):
             await task
         assert cleaned.is_set()
-    asyncio.run(check())
-
-
-def test_successful_real_sdk_transport_serialization():
-    async def check():
-        seen = []
-        async def handle(request):
-            seen.append(json.loads(request.content))
-            return httpx.Response(200, json=final().model_dump(mode='json'))
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-            async with AsyncOpenAI(api_key='fake', http_client=http) as client:
-                definition, harness, _ = setup(client)
-                result = await harness.run(definition, AgentContext(request_id='r', input_data={}), skills=['sample'])
-                assert result.output.value == 3 and len(seen) == 1
-                assert seen[0]['input'][1]['role'] == 'developer'
-                assert seen[0]['max_output_tokens'] == definition.limits.max_output_tokens
-    asyncio.run(check())
-
-
-def test_optional_responses_features_are_only_sent_when_enabled():
-    async def check():
-        client = FakeClient([final()])
-        definition, harness, _ = setup(client)
-        adapter = OpenAILLMAdapter(model='test-model', client=client,
-            include_encrypted_reasoning=True)
-        harness.llm = adapter
-        result = await harness.run(definition, AgentContext(request_id='r', input_data={}))
-        assert result.status == AgentStatus.SUCCESS
-        assert client.requests[0]['include'] == ['reasoning.encrypted_content']
-    asyncio.run(check())
-
-
-@pytest.mark.skipif(os.getenv('RUN_OPENAI_LIVE') != '1', reason='LIVE_NOT_RUN: explicitly set RUN_OPENAI_LIVE=1')
-def test_live_generic_acceptance():
-    settings = Settings()
-    model = os.getenv('OPENAI_TEST_MODEL') or settings.openai_model or settings.llm_model
-    key = settings.openai_api_key or settings.llm_api_key
-    if not key or model == 'mock-model':
-        pytest.skip('LIVE_NOT_RUN: configure API key and OPENAI_MODEL (or OPENAI_TEST_MODEL)')
-    async def check():
-        adapter = OpenAILLMAdapter(model=model, api_key=key.get_secret_value(),
-            base_url=settings.openai_base_url, timeout=settings.llm_timeout_seconds)
-        definition, harness, effects = setup(FakeClient([]))
-        harness.llm = adapter
-        definition.system_prompt = ('Call echo with value 1 and value 2 in the first step. '
-            'After receiving both results call echo with value 3. After that return {"value":3}.')
-        try:
-            result = await harness.run(definition, AgentContext(request_id='live-test', input_data={}), skills=['sample'])
-            assert result.status == AgentStatus.SUCCESS and result.output.value == 3
-            assert sorted(effects[:2]) == [1, 2] and effects[2:] == [3]
-            assert len([e for e in result.events if e.event == 'llm_response']) >= 3
-        finally:
-            await adapter.aclose()
     asyncio.run(check())

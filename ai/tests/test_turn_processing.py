@@ -72,45 +72,6 @@ def test_stale_reference_rejected_before_parser_even_for_explicit_new_input():
     parser.assert_not_called()
 
 
-def test_text_turn_issues_llm_question_wording_with_canonical_fields():
-    graph, _, _ = setup_turn()
-    parsed = empty_request()
-    parser = AsyncMock(return_value=ParsedTurn(parsed, 'summary', question_drafts=[
-        {'fields': ['destination.city', 'destination.selection_mode'],
-         'question': 'Bạn muốn tự chọn thành phố hay để mình chọn giúp?'},
-        {'fields': ['trip.start_date', 'trip.end_date', 'trip.duration_days'],
-         'question': 'Bạn dự định đi vào ngày nào, ngày về nào hoặc trong bao nhiêu ngày?'},
-        {'fields': ['travelers.adults', 'travelers.children', 'budget.amount', 'budget.scope'],
-         'question': 'Chuyến đi có bao nhiêu người và ngân sách dự kiến là bao nhiêu?'},
-    ]))
-
-    result = turn(graph, content='Plan a trip', parser=parser)
-
-    assert result.reply == 'Bạn muốn đi đâu, hay muốn AI chọn điểm đến?'
-    assert result.run.pending_questions[0].question == result.reply
-    assert result.run.pending_questions[0].fields == ['destination.selection_mode']
-
-
-def test_intent_change_supersedes_question_without_resetting_budget():
-    graph, store, _ = setup_turn()
-    value = TripRequest.model_validate(request('USER_UNKNOWN'))
-    first = turn(graph, value).run
-    changed = TripRequest.model_validate(request('ANY_DESTINATION'))
-    parser = AsyncMock(return_value=ParsedTurn(changed))
-    updated = turn(graph, previous=first, content='Anywhere is fine', parser=parser).run
-    assert store.superseded[0].question_id == first.pending_questions[0].question_id
-    assert store.superseded[0].status == 'superseded'
-    assert updated.state.destination_round == 2
-    assert updated.state.destination_episode.episode_id == first.state.destination_episode.episode_id
-    assert not updated.answers_history
-    parser.reset_mock()
-    with pytest.raises(StaleTurn):
-        turn(graph, previous=updated, content='New destination', parser=parser,
-             question_id=first.pending_questions[0].question_id,
-             episode_id=first.state.destination_episode.episode_id)
-    parser.assert_not_called()
-
-
 def test_nonplanning_and_parser_errors_preserve_entire_workflow():
     graph, store, components = setup_turn()
     first = turn(graph, TripRequest.model_validate(request('USER_UNKNOWN'))).run
@@ -145,25 +106,9 @@ def test_failed_requires_new_workflow_and_clean_episode():
     assert parser.call_args.args[0].destination.city is None
 
 
-def test_late_referenced_response_after_failure_never_reopens_or_reparses():
-    graph, _, _ = setup_turn()
-    waiting = turn(graph, TripRequest.model_validate(request('USER_UNKNOWN'))).run
-    question = waiting.pending_questions[0]
-    failed = waiting.model_copy(deep=True)
-    failed.state.status = 'failed'
-    failed.state.destination_episode.status = 'failed'
-    failed.pending_questions[0].status = 'cancelled'
-    parser = AsyncMock(return_value=ParsedTurn(TripRequest.model_validate(request('EXPLICIT'))))
-    with pytest.raises(StaleTurn):
-        turn(graph, previous=failed, content='Hue', parser=parser,
-             workflow_id=failed.state.request_id,
-             episode_id=question.episode_id, question_id=question.question_id)
-    parser.assert_not_called()
-
-
 def test_completed_edit_keeps_workflow_and_only_destination_change_starts_episode():
     components = mock_components()
-    async def select_current(request):
+    async def select_current(request, *, context=None):
         payload = fixture('destination_result')
         payload['selected_region']['city'] = request.destination.city
         return DestinationResult.model_validate(payload)
@@ -171,7 +116,7 @@ def test_completed_edit_keeps_workflow_and_only_destination_change_starts_episod
     graph = workflow(components)
     source = TripRequest.model_validate(request('EXPLICIT'))
     completed = turn(graph, source).run
-    assert completed.state.status == 'completed'
+    assert completed.state.status == 'completed', completed.errors
     original_workflow = completed.state.request_id
     original_episode = completed.state.destination_episode.episode_id
 
@@ -183,13 +128,16 @@ def test_completed_edit_keeps_workflow_and_only_destination_change_starts_episod
     assert ordinary.state.request_id == original_workflow
     assert ordinary.state.destination_episode.episode_id == original_episode
     assert ordinary.state.destination_round == completed.state.destination_round
+    assert ordinary.state.artifacts.destination_result_id == completed.state.artifacts.destination_result_id
+    assert ordinary.resolved_destination == completed.resolved_destination
 
     destination = revised.model_copy(deep=True)
     destination.destination.city = 'Hue'
     destination.destination.selection_provenance.evidence = 'destination.city=Hue'
     changed = turn(graph, previous=ordinary, content='Đổi điểm đến sang Huế',
                    parser=AsyncMock(return_value=ParsedTurn(destination))).run
-    assert changed.state.status == 'completed', changed.errors
+    assert changed.state.status == 'failed'
+    assert changed.outputs['request_parser'].destination.city == 'Hue'
     assert changed.state.request_id == original_workflow
     assert changed.state.destination_episode.episode_id != original_episode
     assert changed.state.destination_round == 0

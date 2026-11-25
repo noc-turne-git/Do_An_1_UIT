@@ -15,7 +15,7 @@ class AISettings(BaseSettings):
                                      'max_destination_rounds'))
     clarification_defaults: TripRequestDefaults = Field(default_factory=TripRequestDefaults)
     clarification_preference_defaults: ApprovedPreferenceDefaults | None = None
-    graph_max_revisions: int = Field(default=8, ge=0)
+    graph_max_repair_rounds: int = Field(default=3, ge=0)
     graph_max_retries: int = Field(default=3, ge=0)
     graph_max_transitions: int = Field(default=80, ge=1)
     graph_max_candidates: int = Field(default=400, ge=100)

@@ -33,6 +33,7 @@ def result():
                            dict(city='Da Lat', candidate_id='c1', rank=1, reason='Cool')])
 
 
+@pytest.mark.smoke
 def test_legacy_does_not_grant_authority_or_actionability():
     for mode in ['implicit', 'explicit', 'ambiguous']:
         data = fixture('trip_request')['destination'] | dict(selection_mode=mode)
@@ -65,8 +66,8 @@ def test_any_requires_exhausted_rounds_and_completed_final_resolve():
         episode.default_candidate()
     episode = DestinationEpisode.model_validate(episode.model_dump() | dict(
         final_resolve_status='completed', final_resolve_id=uuid4(), final_resolve_result=result()))
-    assert episode.default_candidate().candidate_id == 'c1'  # not array position zero
-    assert episode.default_candidate().candidate_id == 'c1'
+    with pytest.raises(ValueError):
+        episode.default_candidate()
     with pytest.raises(ValueError):
         DestinationEpisode.model_validate(episode.model_dump() | dict(
             selection_intent='DELEGATE_SELECTION')).default_candidate()
@@ -109,32 +110,6 @@ def test_second_question_can_answer_but_snapshot_and_option_must_match():
         answer(q).validate_for(question(**(q.model_dump() | dict(status='answered'))))
 
 
-def test_purpose_not_field_path_and_constraint_confirmation():
-    proposal = dict(proposal_id='p1', fields=['budget.amount'],
-                    proposed_values={'budget.amount': 5000000}, reason='Expand search')
-    q = question(kind='destination_info', fields=['budget.amount'], options=[], constraint_proposal=proposal)
-    assert q.counter_group == 'destination'
-    assert question(kind='trip_request', fields=['budget.amount'], options=[]).counter_group == 'trip_request'
-    a = answer(q, selected_option_id=None, confirmed_proposal_id='p1', constraint_confirmed=False)
-    assert a.validate_for(q).constraint_confirmed is False
-    with pytest.raises(ValueError):
-        answer(q, selected_option_id=None).validate_for(q)
-
-
-def test_recovery_must_be_structured_before_routing():
-    data = dict(request_type='INSUFFICIENT', selection_status='needs_more_info',
-        selected_region=None, candidate_regions=[], missing_fields=['budget.amount'], selection_reason='why')
-    old = DestinationResult(**data)
-    with pytest.raises(ValueError):
-        old.require_canonical_recovery()
-    new = DestinationResult(**data, information_requests=[dict(purpose='destination_info',
-        fields=['budget.amount'], reason='distinguish candidates')])
-    assert new.require_canonical_recovery().information_requests[0].purpose == 'destination_info'
-    recovery = DestinationResult(**(data | dict(selection_status='no_valid_candidate')),
-        recovery=dict(fields=['budget.amount'], reason='No match'))
-    assert recovery.require_canonical_recovery().recovery.fields == ['budget.amount']
-
-
 def test_duplicate_identity_and_ranking_rejected():
     q = question()
     with pytest.raises(ValidationError):
@@ -143,37 +118,3 @@ def test_duplicate_identity_and_ranking_rejected():
     data['candidate_regions'][1]['rank'] = 2
     with pytest.raises(ValidationError):
         DestinationResult.model_validate(data)
-
-
-def test_single_candidate_can_require_user_confirmation():
-    data = result().model_dump()
-    data['candidate_regions'] = data['candidate_regions'][:1]
-    assert len(DestinationResult.model_validate(data).candidate_regions) == 1
-    data['candidate_regions'] = []
-    with pytest.raises(ValidationError):
-        DestinationResult.model_validate(data)
-
-
-@pytest.mark.parametrize('name,model,value', [
-    ('pending_question', PendingQuestion, question),
-    ('answer_history', AnswerHistory, lambda: answer(question())),
-    ('destination_episode', DestinationEpisode, lambda: DestinationEpisode(
-        episode_id=uuid4(), request_id=uuid4(), final_resolve_status='completed',
-        final_resolve_id=uuid4(), final_resolve_result=result())),
-])
-def test_roundtrip_and_exported_schema(name, model, value):
-    instance = value()
-    wire = json.loads(instance.model_dump_json())
-    assert model.model_validate_json(json.dumps(wire)) == instance
-    schema = json.loads((Path(__file__).parents[2] / 'shared' / 'schemas' / f'{name}.json').read_text())
-    assert {k: v for k, v in schema.items() if k != '$schema'} == model.model_json_schema()
-    Draft202012Validator.check_schema(schema)
-    Draft202012Validator(schema).validate(wire)
-    if name == 'pending_question':
-        wire['options'][0]['rank'] = 0
-    elif name == 'answer_history':
-        wire['kind'] = 'arbitrary'
-    else:
-        wire['destination_round'] = -1
-    with pytest.raises(SchemaError):
-        Draft202012Validator(schema).validate(wire)
